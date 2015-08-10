@@ -47,6 +47,7 @@ package syscall
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
 #include <netinet/tcp.h>
+#include <netinet/sctp.h>
 
 enum {
 	sizeofPtr = sizeof(void*),
