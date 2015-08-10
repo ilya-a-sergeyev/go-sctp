@@ -33,7 +33,7 @@ includes_Darwin='
 #include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
-#include <netinet/ip_mroute.h>
+#include <netinet/sctp.h>
 #include <termios.h>
 '
 
@@ -277,7 +277,7 @@ ccflags="$@"
 		$2 ~ /^O[CNPFP][A-Z]+[^_][A-Z]+$/ ||
 		$2 ~ /^IN_/ ||
 		$2 ~ /^LOCK_(SH|EX|NB|UN)$/ ||
-		$2 ~ /^(AF|SOCK|SO|SOL|IPPROTO|IP|IPV6|ICMP6|TCP|EVFILT|NOTE|EV|SHUT|PROT|MAP|PACKET|MSG|SCM|MCL|DT|MADV|PR)_/ ||
+		$2 ~ /^(AF|SOCK|SO|SOL|IPPROTO|IP|IPV6|ICMP6|TCP|SCTP|EVFILT|NOTE|EV|SHUT|PROT|MAP|PACKET|MSG|SCM|MCL|DT|MADV|PR)_/ ||
 		$2 == "ICMPV6_FILTER" ||
 		$2 == "SOMAXCONN" ||
 		$2 == "NAME_MAX" ||
