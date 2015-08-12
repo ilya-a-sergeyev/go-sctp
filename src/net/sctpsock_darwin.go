@@ -1,4 +1,5 @@
 package net
+
 import (
 	"time"
 	"syscall"
@@ -6,11 +7,145 @@ import (
 
 // +build darwin
 
+type SCTPConn struct {
+	conn
+	sim syscall.SCTPInitMsg // SCTP is on the connection since it's used when the connection is established
+	sinfo syscall.SCTPSndInfo
+}
+
+func newSCTPConn(fd *netFD) *SCTPConn {
+	sim := syscall.SCTPInitMsg{Num_ostreams: 100, Max_instreams:100, Max_attempts:0, Max_init_timeo: 0}
+	sinfo := syscall.SCTPSndInfo{Sid:0, Ppid:0, Assoc_id:0, Context:0, Flags: 0}
+	c := &SCTPConn{conn{fd}, sim, sinfo}
+	setSCTPInitMsg(c.fd, &c.sim)
+	c.SetNoDelaySCTP(true)
+	c.SetReceiveReceiveInfo(false)
+	return c
+}
+
+func newSCTPConnInitMsg(fd *netFD, sim syscall.SCTPInitMsg) *SCTPConn {
+	sinfo := syscall.SCTPSndInfo{Sid:0, Ppid:0, Assoc_id:0, Context:0, Flags: 0}
+	c := &SCTPConn{conn{fd}, sim, sinfo}
+	setSCTPInitMsg(c.fd, &c.sim)
+	c.SetNoDelaySCTP(true)
+	c.SetReceiveReceiveInfo(false)
+	return c
+}
+
+func (c *SCTPConn) SetSCTPInitMessage(sim syscall.SCTPInitMsg) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	return setSCTPInitMsg(c.fd, &c.sim)
+}
+
+func (c *SCTPConn) SetNumOStreams(n uint16) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sim.Num_ostreams = n
+	return setSCTPInitMsg(c.fd, &c.sim)
+}
+
+func (c *SCTPConn) SetMaxInStreams(n uint16) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sim.Max_instreams = n
+	return setSCTPInitMsg(c.fd, &c.sim)
+}
+
+func (c *SCTPConn) SetMaxAttempts(n uint16) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sim.Max_attempts = n
+	return setSCTPInitMsg(c.fd, &c.sim)
+}
+
+func (c *SCTPConn) SetMaxInitTimeout(n uint16) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sim.Max_init_timeo = n
+	return setSCTPInitMsg(c.fd, &c.sim)
+}
+
+func (c *SCTPConn) SetNoDelaySCTP(noDelay bool) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	return setNoDelaySCTP(c.fd, noDelay)
+}
+
+
+func (c *SCTPConn) SetReceiveReceiveInfo(b bool) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	return setReceiveReceiveInfo(c.fd, b)
+}
+
+//
+// set syscall.SCTPSndInfo values
+//
+
+func (c *SCTPConn) SetSid(sid uint16) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sinfo.Sid = sid
+	return nil
+}
+
+func (c *SCTPConn) Flags(flags uint16) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sinfo.Flags = flags
+	return nil
+}
+
+func (c *SCTPConn) SetPpid(ppid uint32) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sinfo.Ppid = ppid
+	return nil
+}
+
+func (c *SCTPConn) SetContext(context uint32) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sinfo.Context = context
+	return nil
+}
+
+func (c *SCTPConn) SetAssocId(assocId uint32) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	c.sinfo.Assoc_id = assocId
+	return nil
+}
+
+
 // SCTPAddr represents the address of a SCTP end point
 type SCTPAddr struct {
-	IP IP
-	Port int
-	Zone string
+IP IP
+Port int
+Zone string
+}
+
+func (a *SCTPAddr) family() int {
+	if a == nil || len(a.IP) <= IPv4len {
+		return syscall.AF_INET
+	}
+	if a.IP.To4() != nil {
+		return syscall.AF_INET
+	}
+	return syscall.AF_INET6
 }
 
 func (a *SCTPAddr) opAddr() Addr {
@@ -20,14 +155,25 @@ func (a *SCTPAddr) opAddr() Addr {
 	return a
 }
 
-type SCTPConn struct {
-	conn
+
+func (a *SCTPAddr) Network() string { return "sctp" }
+
+func (a *SCTPAddr) String() string {
+	if a == nil {
+		return "<nil>"
+	}
+	ip := ipEmptyString(a.IP)
+	if a.Zone != "" {
+		return JoinHostPort(ip+"%"+a.Zone, itoa(a.Port))
+	}
+	return JoinHostPort(ip, itoa(a.Port))
 }
 
-func newSCTPConn(fd *netFD) *SCTPConn {
-	c := &SCTPConn{conn{fd}}
-	setNoDelaySCTP(c.fd, true)
-	return c
+func (a *SCTPAddr) isWildcard() bool {
+	if a == nil || a.IP == nil {
+		return true
+	}
+	return a.IP.IsUnspecified()
 }
 
 func DialSCTP(net string, laddr, raddr *SCTPAddr) (*SCTPConn, error) {
@@ -86,23 +232,23 @@ func (c *SCTPConn) WriteTo(b []byte, addr Addr) (n int, err error) {
 }
 
 func (c *SCTPConn) Close() error {
-	return
+	return nil
 }
 
 func (c *SCTPConn) LocalAddr() Addr {
-	return
+	return nil
 }
 
 func (c *SCTPConn) SetDeadline(t time.Time) error {
-	return
+	return nil
 }
 
 func (c *SCTPConn) SetReadDeadline(t time.Time) error {
-	return
+	return nil
 }
 
 func (c *SCTPConn) SetWriteDeadline(t time.Time) error {
-	return
+	return nil
 }
 
 //
@@ -127,7 +273,7 @@ func (c *SCTPConn) WriteToSCTP(b []byte, addr *SCTPAddr) (int, error) {
 	if err != nil {
 		return 0, &OpError{Op: "write", Net: c.fd.net, Source: c.fd.laddr, Addr: addr.opAddr(), Err: err}
 	}
-	n, err := c.fd.writeToSCTP(b, sa)
+	n, err := c.fd.writeToSCTP(b, &c.sinfo, sa)
 	if err != nil {
 		err = &OpError{Op: "write", Net: c.fd.net, Source: c.fd.laddr, Addr: addr.opAddr(), Err: err}
 	}

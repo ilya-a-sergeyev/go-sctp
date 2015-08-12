@@ -132,7 +132,7 @@ type Fbootstraptransfer_t struct {
 }
 
 type Log2phys_t struct {
-	Flags       uint32
+	Flags     uint32
 	Contigbytes int64
 	Devoffset   int64
 }
@@ -456,3 +456,23 @@ type Termios struct {
 	Ispeed    uint64
 	Ospeed    uint64
 }
+
+type SCTPSndInfo struct {
+	Sid      uint16
+	Flags    uint16
+	Ppid     uint32
+	Context  uint32
+	Assoc_id uint32
+}
+
+type SCTPInitMsg struct {
+	Num_ostreams   uint16
+	Max_instreams  uint16
+	Max_attempts   uint16
+	Max_init_timeo uint16
+}
+
+const (
+	SizeofSCTPSndInfo 	   = 0x10
+	SizeofSCTPInitMsg      = 0x8
+)

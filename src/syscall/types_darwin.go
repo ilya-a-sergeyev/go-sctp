@@ -48,6 +48,7 @@ package syscall
 #include <netinet/icmp6.h>
 #include <netinet/tcp.h>
 #include <netinet/sctp.h>
+#include <netinet/sctp_uio.h>
 
 enum {
 	sizeofPtr = sizeof(void*),
@@ -242,3 +243,10 @@ type BpfHdr C.struct_bpf_hdr
 // Terminal handling
 
 type Termios C.struct_termios
+
+// SCTP
+
+type SCTPSndInfo C.struct_sctp_sndinfo
+
+type SCTPInitMsg C.struct_sctp_initmsg
+

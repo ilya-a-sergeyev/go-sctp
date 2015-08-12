@@ -203,6 +203,54 @@ func Getfsstat(buf []Statfs_t, flags int) (n int, err error) {
 	return
 }
 
+func SCTPSendMsg(fd int, p []byte, sinfo *SCTPSndInfo, to Sockaddr, flags int) (length int, err error) {
+	var ptr unsafe.Pointer
+	var salen _Socklen
+	if to != nil {
+		var err error
+		ptr, salen, err = to.sockaddr()
+		if err != nil {
+			return 0, err
+		}
+	}
+	var msg Msghdr
+	msg.Name = (*byte)(unsafe.Pointer(ptr))
+	msg.Namelen = uint32(salen)
+	var iov Iovec
+	if len(p) > 0 {
+		iov.Base = (*byte)(unsafe.Pointer(&p[0]))
+		iov.SetLen(len(p))
+	}
+	var dummy byte
+	if len(p) == 0 {
+		iov.Base = &dummy
+		iov.SetLen(1)
+	}
+	controlBuffer := make([]byte, SizeofCmsghdr + SizeofSCTPSndInfo)
+
+	cdata := (controlBuffer[:])
+	var cmsg *Cmsghdr
+	cmsg = (*Cmsghdr)(unsafe.Pointer(&cdata[0]))
+	cmsg.Level = IPPROTO_SCTP
+	cmsg.Type = SCTP_SNDINFO;
+	cmsg.SetLen(CmsgLen(SizeofSCTPSndInfo))
+
+	var bsinfo *SCTPSndInfo
+	data := (controlBuffer[cmsgAlignOf(SizeofCmsghdr):])
+	bsinfo = (*SCTPSndInfo) (unsafe.Pointer(&data[0]))
+	bsinfo.Sid = sinfo.Sid
+
+	msg.Control = (*byte)(unsafe.Pointer(&controlBuffer[0]))
+	msg.SetControllen(len(controlBuffer))
+
+	msg.Iov = &iov
+	msg.Iovlen = 1
+	if length, err = sendmsg(fd, &msg, flags); err != nil {
+		return
+	}
+	return
+}
+
 /*
  * Wrapped
  */

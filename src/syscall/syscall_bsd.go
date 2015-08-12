@@ -143,6 +143,12 @@ func Wait4(pid int, wstatus *WaitStatus, options int, rusage *Rusage) (wpid int,
 //sysnb	getsockname(fd int, rsa *RawSockaddrAny, addrlen *_Socklen) (err error)
 //sys	Shutdown(s int, how int) (err error)
 
+
+func GetAddressPointer(to Sockaddr) (ptr unsafe.Pointer) {
+	ptr, _, _ = to.sockaddr()
+	return ptr
+}
+
 func (sa *SockaddrInet4) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	if sa.Port < 0 || sa.Port > 0xFFFF {
 		return nil, 0, EINVAL
@@ -552,4 +558,8 @@ func Mmap(fd int, offset int64, length int, prot int, flags int) (data []byte, e
 
 func Munmap(b []byte) (err error) {
 	return mapper.Munmap(b)
+}
+
+func SetsockoptSCTPInitMsg(fd, level, opt int, sinit *SCTPInitMsg) (err error) {
+	return setsockopt(fd, level, opt, unsafe.Pointer(sinit), unsafe.Sizeof(*sinit))
 }
