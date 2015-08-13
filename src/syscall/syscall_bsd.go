@@ -560,6 +560,4 @@ func Munmap(b []byte) (err error) {
 	return mapper.Munmap(b)
 }
 
-func SetsockoptSCTPInitMsg(fd, level, opt int, sinit *SCTPInitMsg) (err error) {
-	return setsockopt(fd, level, opt, unsafe.Pointer(sinit), unsafe.Sizeof(*sinit))
-}
+

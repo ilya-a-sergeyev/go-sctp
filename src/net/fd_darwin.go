@@ -16,7 +16,7 @@ func (fd *netFD) writeToSCTP(p []byte, sinfo *syscall.SCTPSndInfo, sa syscall.So
 		return 0, err
 	}
 	for {
-//		err = SCTPSendV(fd.sysfd, p, 0, sa)
+		//		err = SCTPSendV(fd.sysfd, p, 0, sa)
 		length, err = syscall.SCTPSendMsg(fd.sysfd, p, sinfo, sa, 0)
 
 		if err == syscall.EAGAIN {

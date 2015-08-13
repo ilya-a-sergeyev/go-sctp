@@ -203,6 +203,7 @@ func Getfsstat(buf []Statfs_t, flags int) (n int, err error) {
 	return
 }
 
+
 func SCTPSendMsg(fd int, p []byte, sinfo *SCTPSndInfo, to Sockaddr, flags int) (length int, err error) {
 	var ptr unsafe.Pointer
 	var salen _Socklen
@@ -249,6 +250,10 @@ func SCTPSendMsg(fd int, p []byte, sinfo *SCTPSndInfo, to Sockaddr, flags int) (
 		return
 	}
 	return
+}
+
+func SetsockoptSCTPInitMsg(fd, level, opt int, sinit *SCTPInitMsg) (err error) {
+	return setsockopt(fd, level, opt, unsafe.Pointer(sinit), unsafe.Sizeof(*sinit))
 }
 
 /*
