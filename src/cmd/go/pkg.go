@@ -101,6 +101,33 @@ type Package struct {
 	gobinSubdir  bool                 // install target would be subdir of GOBIN
 }
 
+// vendored returns the vendor-resolved version of imports,
+// which should be p.TestImports or p.XTestImports, NOT p.Imports.
+// The imports in p.TestImports and p.XTestImports are not recursively
+// loaded during the initial load of p, so they list the imports found in
+// the source file, but most processing should be over the vendor-resolved
+// import paths. We do this resolution lazily both to avoid file system work
+// and because the eventual real load of the test imports (during 'go test')
+// can produce better error messages if it starts with the original paths.
+// The initial load of p loads all the non-test imports and rewrites
+// the vendored paths, so nothing should ever call p.vendored(p.Imports).
+func (p *Package) vendored(imports []string) []string {
+	if len(imports) > 0 && len(p.Imports) > 0 && &imports[0] == &p.Imports[0] {
+		panic("internal error: p.vendored(p.Imports) called")
+	}
+	seen := make(map[string]bool)
+	var all []string
+	for _, path := range imports {
+		path, _ = vendoredImportPath(p, path)
+		if !seen[path] {
+			seen[path] = true
+			all = append(all, path)
+		}
+	}
+	sort.Strings(all)
+	return all
+}
+
 // CoverVar holds the name of the generated coverage variables targeting the named file.
 type CoverVar struct {
 	File string // local file name
@@ -744,8 +771,8 @@ func (p *Package) load(stk *importStack, bp *build.Package, err error) *Package 
 		} else if p.build.BinDir != "" {
 			// Install to GOBIN or bin of GOPATH entry.
 			p.target = filepath.Join(p.build.BinDir, elem)
-			if !p.Goroot && strings.Contains(elem, "/") {
-				// Do not create bin/goos_goarch/elem.
+			if !p.Goroot && strings.Contains(elem, "/") && gobin != "" {
+				// Do not create $GOBIN/goos_goarch/elem.
 				p.target = ""
 				p.gobinSubdir = true
 			}
@@ -809,7 +836,7 @@ func (p *Package) load(stk *importStack, bp *build.Package, err error) *Package 
 			importPaths = append(importPaths, "runtime/race")
 		}
 		// On ARM with GOARM=5, everything depends on math for the link.
-		if p.ImportPath == "main" && goarch == "arm" {
+		if p.Name == "main" && goarch == "arm" {
 			importPaths = append(importPaths, "math")
 		}
 	}
@@ -900,11 +927,10 @@ func (p *Package) load(stk *importStack, bp *build.Package, err error) *Package 
 		deps[path] = p1
 		imports = append(imports, p1)
 		for _, dep := range p1.deps {
-			// Do not overwrite entries installed by direct import
-			// just above this loop. Those have stricter constraints
-			// about internal and vendor visibility and may contain
-			// errors that we need to preserve.
-			if deps[dep.ImportPath] == nil {
+			// The same import path could produce an error or not,
+			// depending on what tries to import it.
+			// Prefer to record entries with errors, so we can report them.
+			if deps[dep.ImportPath] == nil || dep.Error != nil {
 				deps[dep.ImportPath] = dep
 			}
 		}
@@ -1612,6 +1638,23 @@ func packagesForBuild(args []string) []*Package {
 		}
 	}
 	exitIfErrors()
+
+	// Check for duplicate loads of the same package.
+	// That should be impossible, but if it does happen then
+	// we end up trying to build the same package twice,
+	// usually in parallel overwriting the same files,
+	// which doesn't work very well.
+	seen := map[string]bool{}
+	reported := map[string]bool{}
+	for _, pkg := range packageList(pkgs) {
+		if seen[pkg.ImportPath] && !reported[pkg.ImportPath] {
+			reported[pkg.ImportPath] = true
+			errorf("internal error: duplicate loads of %s", pkg.ImportPath)
+		}
+		seen[pkg.ImportPath] = true
+	}
+	exitIfErrors()
+
 	return pkgs
 }
 
