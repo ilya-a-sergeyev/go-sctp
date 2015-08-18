@@ -176,6 +176,21 @@ func (fd *netFD) listenStream(laddr sockaddr, backlog int) error {
 
 func (fd *netFD) listenDatagram(laddr sockaddr) error {
 	switch addr := laddr.(type) {
+	case *SCTPAddr: // TODO listenSequencedPacket
+		// TODO more of a palceholder, default socket options are porbably different from UDP
+		if addr.IP != nil && addr.IP.IsMulticast() {
+			if err := setDefaultMulticastSockopts(fd.sysfd); err != nil {
+				return err
+			}
+			addr := *addr
+			switch fd.family {
+			case syscall.AF_INET:
+				addr.IP = IPv4zero
+			case syscall.AF_INET6:
+				addr.IP = IPv6unspecified
+			}
+			laddr = &addr
+		}
 	case *UDPAddr:
 		// We provide a socket that listens to a wildcard
 		// address with reusable UDP port when the given laddr

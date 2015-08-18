@@ -252,6 +252,50 @@ func SCTPSendMsg(fd int, p []byte, sinfo *SCTPSndInfo, to Sockaddr, flags int) (
 	return
 }
 
+func SCTPReceiveMessage(fd int, p []byte, flags int) (n int, oobn int, from Sockaddr, rinfo *SCTPRcvInfo, recvflags int, err error) {
+
+	// Message header
+	var msg Msghdr
+	var rsa RawSockaddrAny
+	msg.Name = (*byte)(unsafe.Pointer(&rsa))
+	msg.Namelen = uint32(SizeofSockaddrAny)
+	// Create struct for message
+	var iov Iovec
+	if len(p) > 0 {
+		iov.Base = (*byte)(unsafe.Pointer(&p[0]))
+		iov.SetLen(len(p))
+	}
+	msg.Iov = &iov
+	msg.Iovlen = 1
+
+	// Message control header
+	var cmsg *Cmsghdr
+
+	controlBuffer := make([]byte, SizeofCmsghdr + SizeofSCTPRcvInfo)
+	cdata := (controlBuffer[:])
+	cmsg = (*Cmsghdr)(unsafe.Pointer(&cdata[0]))
+	msg.Control = (*byte)(unsafe.Pointer(&controlBuffer[0]))
+	msg.SetControllen(len(controlBuffer))
+
+	flags = 0;
+	if n, err = recvmsg(fd, &msg, flags); err != nil {
+		return
+	}
+	oobn = int(msg.Controllen)
+	recvflags = int(msg.Flags)
+
+	if cmsg.Type == SCTP_RCVINFO {
+		data := (controlBuffer[cmsgAlignOf(SizeofCmsghdr):])
+		rinfo = (*SCTPRcvInfo)(unsafe.Pointer(&data[0]))
+	}
+
+	if err != nil {
+		return
+	}
+	from, err = anyToSockaddr(&rsa)
+	return
+}
+
 func SetsockoptSCTPInitMsg(fd, level, opt int, sinit *SCTPInitMsg) (err error) {
 	return setsockopt(fd, level, opt, unsafe.Pointer(sinit), unsafe.Sizeof(*sinit))
 }

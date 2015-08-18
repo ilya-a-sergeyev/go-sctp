@@ -153,7 +153,7 @@ func favoriteAddrFamily(net string, laddr, raddr sockaddr, mode string) (family 
 	return syscall.AF_INET6, false
 }
 
-// Internet sockets (TCP, UDP, IP)
+// Internet sockets (SCTP, TCP, UDP, IP)
 
 func internetSocket(net string, laddr, raddr sockaddr, deadline time.Time, sotype, proto int, mode string) (fd *netFD, err error) {
 	family, ipv6only := favoriteAddrFamily(net, laddr, raddr, mode)

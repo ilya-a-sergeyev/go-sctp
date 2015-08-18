@@ -3,6 +3,7 @@ package net
 import (
 	"time"
 	"syscall"
+	"os"
 )
 
 // +build darwin
@@ -11,12 +12,14 @@ type SCTPConn struct {
 	conn
 	sim syscall.SCTPInitMsg // SCTP is on the connection since it's used when the connection is established
 	sinfo syscall.SCTPSndInfo
+	rinfo *syscall.SCTPRcvInfo
 }
 
 func newSCTPConn(fd *netFD) *SCTPConn {
 	sim := syscall.SCTPInitMsg{Num_ostreams: 100, Max_instreams:100, Max_attempts:0, Max_init_timeo: 0}
 	sinfo := syscall.SCTPSndInfo{Sid:0, Ppid:0, Assoc_id:0, Context:0, Flags: 0}
-	c := &SCTPConn{conn{fd}, sim, sinfo}
+	rinfo := syscall.SCTPRcvInfo{}
+	c := &SCTPConn{conn{fd}, sim, sinfo, &rinfo}
 	setSCTPInitMsg(c.fd, &c.sim)
 	c.SetNoDelaySCTP(true)
 	c.SetReceiveReceiveInfo(false)
@@ -25,7 +28,8 @@ func newSCTPConn(fd *netFD) *SCTPConn {
 
 func newSCTPConnInitMsg(fd *netFD, sim syscall.SCTPInitMsg) *SCTPConn {
 	sinfo := syscall.SCTPSndInfo{Sid:0, Ppid:0, Assoc_id:0, Context:0, Flags: 0}
-	c := &SCTPConn{conn{fd}, sim, sinfo}
+	rinfo := syscall.SCTPRcvInfo{}
+	c := &SCTPConn{conn{fd}, sim, sinfo, &rinfo}
 	setSCTPInitMsg(c.fd, &c.sim)
 	c.SetNoDelaySCTP(true)
 	c.SetReceiveReceiveInfo(false)
@@ -217,6 +221,33 @@ func ResolveSCTPAddr(net, addr string) (*SCTPAddr, error) {
 //
 
 func (c *SCTPConn) ReadFrom(b []byte) (n int, addr Addr, err error) {
+	if !c.ok() {
+		return 0, nil, syscall.EINVAL
+	}
+//	oobn int, flags int,
+	n, _, _, addr, err = c.ReadFromSCTP(b)
+	if err != nil {
+		return
+	}
+	return
+}
+
+func (c *SCTPConn) ReadFromSCTP(b []byte) (n int, oobn int, flags int, addr *SCTPAddr, err error) {
+	if !c.ok() {
+		return 0, 0, 0, nil, syscall.EINVAL
+	}
+	var sa syscall.Sockaddr
+	n, oobn, flags, sa, c.rinfo, err = c.fd.ReadFromSCTP(b)
+
+	if err != nil {
+		return
+	}
+	switch sa := sa.(type) {
+	case *syscall.SockaddrInet4:
+		addr = &SCTPAddr{IP: sa.Addr[0:], Port: sa.Port}
+	case *syscall.SockaddrInet6:
+		addr = &SCTPAddr{IP: sa.Addr[0:], Port: sa.Port, Zone: zoneToString(int(sa.ZoneId))}
+	}
 	return
 }
 
@@ -280,3 +311,39 @@ func (c *SCTPConn) WriteToSCTP(b []byte, addr *SCTPAddr) (int, error) {
 	return n, err
 }
 
+func ListenSCTP(net string, laddr *SCTPAddr) (*SCTPConn, error) {
+	switch net {
+	case "sctp", "sctp4", "sctp6":
+	default:
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: laddr.opAddr(), Err: UnknownNetworkError(net)}
+	}
+	if laddr == nil {
+		laddr = &SCTPAddr{}
+	}
+	fd, err := internetSocket(net, laddr, nil, noDeadline, syscall.SOCK_SEQPACKET, syscall.IPPROTO_SCTP, "dial")
+	if err != nil {
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: laddr, Err: err}
+	}
+
+	err = syscall.Listen(fd.sysfd, listenerBacklog)
+	os.NewSyscallError("setsockopt", syscall.SetsockoptInt(fd.sysfd, syscall.IPPROTO_SCTP, syscall.SCTP_LISTEN_FIX, 1))
+
+	return newSCTPConn(fd), nil
+}
+
+// Initialize with a specific SCTP Init message instead of defaults
+func ListenSCTPInit(net string, laddr *SCTPAddr, sim syscall.SCTPInitMsg) (*SCTPConn, error) {
+	switch net {
+	case "sctp", "sctp4", "sctp6":
+	default:
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: laddr.opAddr(), Err: UnknownNetworkError(net)}
+	}
+	if laddr == nil {
+		laddr = &SCTPAddr{}
+	}
+	fd, err := internetSocket(net, laddr, nil, noDeadline, syscall.SOCK_SEQPACKET, 0, "listen")
+	if err != nil {
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: laddr, Err: err}
+	}
+	return newSCTPConnInitMsg(fd, sim), nil
+}

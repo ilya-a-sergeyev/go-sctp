@@ -32,3 +32,32 @@ func (fd *netFD) writeToSCTP(p []byte, sinfo *syscall.SCTPSndInfo, sa syscall.So
 	}
 	return
 }
+
+func (fd *netFD) ReadFromSCTP(p []byte) (n int, oobn int, flags int, sa syscall.Sockaddr, rinfo *syscall.SCTPRcvInfo, err error) {
+	if err = fd.readLock(); err != nil {
+		return
+	}
+	defer fd.readUnlock()
+	if err = fd.pd.PrepareRead(); err != nil {
+		return
+	}
+	for {
+//		(n int, oobn int, from Sockaddr, rinfo *SCTPRcvInfo, recvflags int, err error)
+		n, oobn, sa, rinfo, flags, err = syscall.SCTPReceiveMessage(fd.sysfd, p, 0)
+
+		if err != nil {
+			n = 0
+			if err == syscall.EAGAIN {
+				if err = fd.pd.WaitRead(); err == nil {
+					continue
+				}
+			}
+		}
+		err = fd.eofError(n, err)
+		break
+	}
+	if _, ok := err.(syscall.Errno); ok {
+		err = os.NewSyscallError("recvfrom", err)
+	}
+	return
+}

@@ -105,54 +105,6 @@ func (d *Dialer) fallbackDelay() time.Duration {
 	}
 }
 
-func parseNetwork(net string) (afnet string, proto int, err error) {
-	i := last(net, ':')
-	if i < 0 { // no colon
-		switch net {
-		case "tcp", "tcp4", "tcp6":
-		case "udp", "udp4", "udp6":
-		case "ip", "ip4", "ip6":
-		case "unix", "unixgram", "unixpacket":
-		default:
-			return "", 0, UnknownNetworkError(net)
-		}
-		return net, 0, nil
-	}
-	afnet = net[:i]
-	switch afnet {
-	case "ip", "ip4", "ip6":
-		protostr := net[i+1:]
-		proto, i, ok := dtoi(protostr, 0)
-		if !ok || i != len(protostr) {
-			proto, err = lookupProtocol(protostr)
-			if err != nil {
-				return "", 0, err
-			}
-		}
-		return afnet, proto, nil
-	}
-	return "", 0, UnknownNetworkError(net)
-}
-
-func resolveAddrList(op, net, addr string, deadline time.Time) (addrList, error) {
-	afnet, _, err := parseNetwork(net)
-	if err != nil {
-		return nil, err
-	}
-	if op == "dial" && addr == "" {
-		return nil, errMissingAddress
-	}
-	switch afnet {
-	case "unix", "unixgram", "unixpacket":
-		addr, err := ResolveUnixAddr(afnet, addr)
-		if err != nil {
-			return nil, err
-		}
-		return addrList{addr}, nil
-	}
-	return internetAddrList(afnet, addr, deadline)
-}
-
 // Dial connects to the address on the named network.
 //
 // Known networks are "tcp", "tcp4" (IPv4-only), "tcp6" (IPv6-only),
@@ -404,28 +356,51 @@ func Listen(net, laddr string) (Listener, error) {
 	return l, nil
 }
 
-// ListenPacket announces on the local network address laddr.
-// The network net must be a packet-oriented network: "udp", "udp4",
-// "udp6", "ip", "ip4", "ip6" or "unixgram".
-// See Dial for the syntax of laddr.
-func ListenPacket(net, laddr string) (PacketConn, error) {
-	addrs, err := resolveAddrList("listen", net, laddr, noDeadline)
+func resolveAddrList(op, net, addr string, deadline time.Time) (addrList, error) {
+	afnet, _, err := parseNetwork(net)
 	if err != nil {
-		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: nil, Err: err}
+		return nil, err
 	}
-	var l PacketConn
-	switch la := addrs.first(isIPv4).(type) {
-	case *UDPAddr:
-		l, err = ListenUDP(net, la)
-	case *IPAddr:
-		l, err = ListenIP(net, la)
-	case *UnixAddr:
-		l, err = ListenUnixgram(net, la)
-	default:
-		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: la, Err: &AddrError{Err: "unexpected address type", Addr: laddr}}
+	if op == "dial" && addr == "" {
+		return nil, errMissingAddress
 	}
-	if err != nil {
-		return nil, err // l is non-nil interface containing nil pointer
+	switch afnet {
+	case "unix", "unixgram", "unixpacket":
+		addr, err := ResolveUnixAddr(afnet, addr)
+		if err != nil {
+			return nil, err
+		}
+		return addrList{addr}, nil
 	}
-	return l, nil
+	return internetAddrList(afnet, addr, deadline)
+}
+
+func parseNetwork(net string) (afnet string, proto int, err error) {
+	i := last(net, ':')
+	if i < 0 { // no colon
+		switch net {
+		case "tcp", "tcp4", "tcp6":
+		case "udp", "udp4", "udp6":
+		case "sctp", "sctp4", "sctp6":
+		case "ip", "ip4", "ip6":
+		case "unix", "unixgram", "unixpacket":
+		default:
+			return "", 0, UnknownNetworkError(net)
+		}
+		return net, 0, nil
+	}
+	afnet = net[:i]
+	switch afnet {
+	case "ip", "ip4", "ip6":
+		protostr := net[i+1:]
+		proto, i, ok := dtoi(protostr, 0)
+		if !ok || i != len(protostr) {
+			proto, err = lookupProtocol(protostr)
+			if err != nil {
+				return "", 0, err
+			}
+		}
+		return afnet, proto, nil
+	}
+	return "", 0, UnknownNetworkError(net)
 }
