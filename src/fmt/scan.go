@@ -83,6 +83,8 @@ func Scanln(a ...interface{}) (n int, err error) {
 // the format.  It returns the number of items successfully scanned.
 // If that is less than the number of arguments, err will report why.
 // Newlines in the input must match newlines in the format.
+// The one exception: the verb %c always scans the next rune in the
+// input, even if it is a space (or tab etc.) or newline.
 func Scanf(format string, a ...interface{}) (n int, err error) {
 	return Fscanf(os.Stdin, format, a...)
 }
@@ -536,7 +538,7 @@ func (s *ss) okVerb(verb rune, okVerbs, typ string) bool {
 			return true
 		}
 	}
-	s.errorString("bad verb %" + string(verb) + " for " + typ)
+	s.errorString("bad verb '%" + string(verb) + "' for " + typ)
 	return false
 }
 
@@ -811,7 +813,7 @@ func (s *ss) scanComplex(verb rune, n int) complex128 {
 // convertString returns the string represented by the next input characters.
 // The format of the input is determined by the verb.
 func (s *ss) convertString(verb rune) (str string) {
-	if !s.okVerb(verb, "svqx", "string") {
+	if !s.okVerb(verb, "svqxX", "string") {
 		return ""
 	}
 	s.skipSpace(false)
@@ -819,7 +821,7 @@ func (s *ss) convertString(verb rune) (str string) {
 	switch verb {
 	case 'q':
 		str = s.quotedString()
-	case 'x':
+	case 'x', 'X':
 		str = s.hexString()
 	default:
 		str = string(s.token(true, notSpace)) // %s and %v just return the next word
@@ -1076,6 +1078,10 @@ func (s *ss) advance(format string) (i int) {
 	for i < len(format) {
 		fmtc, w := utf8.DecodeRuneInString(format[i:])
 		if fmtc == '%' {
+			// % at end of string is an error.
+			if i+w == len(format) {
+				s.errorString("missing verb: % at end of format string")
+			}
 			// %% acts like a real percent
 			nextc, _ := utf8.DecodeRuneInString(format[i+w:]) // will not match % if string is empty
 			if nextc != '%' {
@@ -1164,17 +1170,20 @@ func (s *ss) doScanf(format string, a []interface{}) (numProcessed int, err erro
 		if !widPresent {
 			s.maxWid = hugeWid
 		}
-		s.SkipSpace()
+
+		c, w := utf8.DecodeRuneInString(format[i:])
+		i += w
+
+		if c != 'c' {
+			s.SkipSpace()
+		}
 		s.argLimit = s.limit
 		if f := s.count + s.maxWid; f < s.argLimit {
 			s.argLimit = f
 		}
 
-		c, w := utf8.DecodeRuneInString(format[i:])
-		i += w
-
 		if numProcessed >= len(a) { // out of operands
-			s.errorString("too few operands for format %" + format[i-w:])
+			s.errorString("too few operands for format '%" + format[i-w:] + "'")
 			break
 		}
 		arg := a[numProcessed]

@@ -47,9 +47,9 @@ import (
 //		Flags: those of %N
 //			','  separate items with ',' instead of ';'
 //
-//   In mparith1.c:
-//      %B Mpint*	Big integers
-//	%F Mpflt*	Big floats
+//   In mparith2.go and mparith3.go:
+//		%B Mpint*	Big integers
+//		%F Mpflt*	Big floats
 //
 //   %S, %T and %N obey use the following flags to set the format mode:
 const (
@@ -62,6 +62,8 @@ const (
 var fmtmode int = FErr
 
 var fmtpkgpfx int // %uT stickyness
+
+var fmtbody bool
 
 //
 // E.g. for %S:	%+S %#S %-S	print an identifier properly qualified for debug/export/internal mode.
@@ -87,8 +89,9 @@ var fmtpkgpfx int // %uT stickyness
 //	%-uT		type identifiers with package name instead of prefix (typesym, dcommontype, typehash)
 //
 
-func setfmode(flags *int) int {
-	fm := fmtmode
+func setfmode(flags *int) (fm int, fb bool) {
+	fm = fmtmode
+	fb = fmtbody
 	if *flags&obj.FmtSign != 0 {
 		fmtmode = FDbg
 	} else if *flags&obj.FmtSharp != 0 {
@@ -97,8 +100,12 @@ func setfmode(flags *int) int {
 		fmtmode = FTypeId
 	}
 
-	*flags &^= (obj.FmtSharp | obj.FmtLeft | obj.FmtSign)
-	return fm
+	if *flags&obj.FmtBody != 0 {
+		fmtbody = true
+	}
+
+	*flags &^= (obj.FmtSharp | obj.FmtLeft | obj.FmtSign | obj.FmtBody)
+	return
 }
 
 // Fmt "%L": Linenumbers
@@ -356,7 +363,7 @@ func Vconv(v Val, flag int) string {
 		return "nil"
 	}
 
-	return fmt.Sprintf("<ctype=%d>", v.Ctype)
+	return fmt.Sprintf("<ctype=%d>", v.Ctype())
 }
 
 /*
@@ -401,8 +408,8 @@ var etnames = []string{
 }
 
 // Fmt "%E": etype
-func Econv(et int, flag int) string {
-	if et >= 0 && et < len(etnames) && etnames[et] != "" {
+func Econv(et EType) string {
+	if int(et) < len(etnames) && etnames[et] != "" {
 		return etnames[et]
 	}
 	return fmt.Sprintf("E-%d", et)
@@ -413,7 +420,7 @@ func symfmt(s *Sym, flag int) string {
 	if s.Pkg != nil && flag&obj.FmtShort == 0 {
 		switch fmtmode {
 		case FErr: // This is for the user
-			if s.Pkg == localpkg {
+			if s.Pkg == builtinpkg || s.Pkg == localpkg {
 				return s.Name
 			}
 
@@ -434,7 +441,7 @@ func symfmt(s *Sym, flag int) string {
 
 		case FExp:
 			if s.Name != "" && s.Name[0] == '.' {
-				Fatal("exporting synthetic symbol %s", s.Name)
+				Fatalf("exporting synthetic symbol %s", s.Name)
 			}
 			if s.Pkg != builtinpkg {
 				return fmt.Sprintf("@%q.%s", s.Pkg.Path, s.Name)
@@ -537,7 +544,7 @@ func typefmt(t *Type, flag int) string {
 
 	if fmtmode == FDbg {
 		fmtmode = 0
-		str := Econv(int(t.Etype), 0) + "-" + typefmt(t, flag)
+		str := Econv(t.Etype) + "-" + typefmt(t, flag)
 		fmtmode = FDbg
 		return str
 	}
@@ -580,9 +587,14 @@ func typefmt(t *Type, flag int) string {
 		buf.WriteString("interface {")
 		for t1 := t.Type; t1 != nil; t1 = t1.Down {
 			buf.WriteString(" ")
-			if exportname(t1.Sym.Name) {
+			switch {
+			case t1.Sym == nil:
+				// Check first that a symbol is defined for this type.
+				// Wrong interface definitions may have types lacking a symbol.
+				break
+			case exportname(t1.Sym.Name):
 				buf.WriteString(Sconv(t1.Sym, obj.FmtShort))
-			} else {
+			default:
 				buf.WriteString(Sconv(t1.Sym, obj.FmtUnsigned))
 			}
 			buf.WriteString(Tconv(t1.Type, obj.FmtShort))
@@ -648,7 +660,7 @@ func typefmt(t *Type, flag int) string {
 		}
 
 		var buf bytes.Buffer
-		if t.Funarg != 0 {
+		if t.Funarg {
 			buf.WriteString("(")
 			if fmtmode == FTypeId || fmtmode == FErr { // no argument names on function signature, and no "noescape"/"nosplit" tags
 				for t1 := t.Type; t1 != nil; t1 = t1.Down {
@@ -705,7 +717,7 @@ func typefmt(t *Type, flag int) string {
 			}
 
 			if s != nil && t.Embedded == 0 {
-				if t.Funarg != 0 {
+				if t.Funarg {
 					name = Nconv(t.Nname, 0)
 				} else if flag&obj.FmtLong != 0 {
 					name = Sconv(s, obj.FmtShort|obj.FmtByte) // qualify non-exported names (used on structs, not on funarg)
@@ -714,7 +726,7 @@ func typefmt(t *Type, flag int) string {
 				}
 			} else if fmtmode == FExp {
 				// TODO(rsc) this breaks on the eliding of unused arguments in the backend
-				// when this is fixed, the special case in dcl.c checkarglist can go.
+				// when this is fixed, the special case in dcl.go checkarglist can go.
 				//if(t->funarg)
 				//	fmtstrcpy(fp, "_ ");
 				//else
@@ -737,7 +749,7 @@ func typefmt(t *Type, flag int) string {
 		if name != "" {
 			str = name + " " + typ
 		}
-		if flag&obj.FmtShort == 0 && t.Note != nil {
+		if flag&obj.FmtShort == 0 && !fmtbody && t.Note != nil {
 			str += " " + strconv.Quote(*t.Note)
 		}
 		return str
@@ -756,15 +768,15 @@ func typefmt(t *Type, flag int) string {
 	}
 
 	if fmtmode == FExp {
-		Fatal("missing %v case during export", Econv(int(t.Etype), 0))
+		Fatalf("missing %v case during export", Econv(t.Etype))
 	}
 
 	// Don't know how to handle - fall back to detailed prints.
-	return fmt.Sprintf("%v <%v> %v", Econv(int(t.Etype), 0), t.Sym, t.Type)
+	return fmt.Sprintf("%v <%v> %v", Econv(t.Etype), t.Sym, t.Type)
 }
 
 // Statements which may be rendered with a simplestmt as init.
-func stmtwithinit(op int) bool {
+func stmtwithinit(op Op) bool {
 	switch op {
 	case OIF, OFOR, OSWITCH:
 		return true
@@ -782,13 +794,13 @@ func stmtfmt(n *Node) string {
 	// block starting with the init statements.
 
 	// if we can just say "for" n->ninit; ... then do so
-	simpleinit := n.Ninit != nil && n.Ninit.Next == nil && n.Ninit.N.Ninit == nil && stmtwithinit(int(n.Op))
+	simpleinit := n.Ninit != nil && n.Ninit.Next == nil && n.Ninit.N.Ninit == nil && stmtwithinit(n.Op)
 
 	// otherwise, print the inits as separate statements
 	complexinit := n.Ninit != nil && !simpleinit && (fmtmode != FErr)
 
 	// but if it was for if/for/switch, put in an extra surrounding block to limit the scope
-	extrablock := complexinit && stmtwithinit(int(n.Op))
+	extrablock := complexinit && stmtwithinit(n.Op)
 
 	if extrablock {
 		f += "{"
@@ -817,7 +829,7 @@ func stmtfmt(n *Node) string {
 			f += Nconv(n.Right, 0)
 		}
 
-		// Don't export "v = <N>" initializing statements, hope they're always
+	// Don't export "v = <N>" initializing statements, hope they're always
 	// preceded by the DCL which will be re-parsed and typecheck to reproduce
 	// the "v = <N>" again.
 	case OAS, OASWB:
@@ -833,7 +845,7 @@ func stmtfmt(n *Node) string {
 
 	case OASOP:
 		if n.Implicit {
-			if n.Etype == OADD {
+			if Op(n.Etype) == OADD {
 				f += fmt.Sprintf("%v++", n.Left)
 			} else {
 				f += fmt.Sprintf("%v--", n.Left)
@@ -1116,7 +1128,7 @@ func exprfmt(n *Node, prec int) string {
 		if n.Val().Ctype() == CTNIL && n.Orig != nil && n.Orig != n {
 			return exprfmt(n.Orig, prec)
 		}
-		if n.Type != nil && n.Type != Types[n.Type.Etype] && n.Type != idealbool && n.Type != idealstring {
+		if n.Type != nil && n.Type.Etype != TIDEAL && n.Type.Etype != TNIL && n.Type != idealbool && n.Type != idealstring {
 			// Need parens when type begins with what might
 			// be misinterpreted as a unary operator: * or <-.
 			if Isptr[n.Type.Etype] || (n.Type.Etype == TCHAN && n.Type.Chan == Crecv) {
@@ -1128,7 +1140,7 @@ func exprfmt(n *Node, prec int) string {
 
 		return Vconv(n.Val(), 0)
 
-		// Special case: name used as local variable in export.
+	// Special case: name used as local variable in export.
 	// _ becomes ~b%d internally; print as _ for export
 	case ONAME:
 		if (fmtmode == FExp || fmtmode == FErr) && n.Sym != nil && n.Sym.Name[0] == '~' && n.Sym.Name[1] == 'b' {
@@ -1150,7 +1162,6 @@ func exprfmt(n *Node, prec int) string {
 		}
 		fallthrough
 
-		//fallthrough
 	case OPACK, ONONAME:
 		return Sconv(n.Sym, 0)
 
@@ -1444,6 +1455,7 @@ func exprfmt(n *Node, prec int) string {
 	case OCMPSTR, OCMPIFACE:
 		var f string
 		f += exprfmt(n.Left, nprec)
+		// TODO(marvin): Fix Node.EType type union.
 		f += fmt.Sprintf(" %v ", Oconv(int(n.Etype), obj.FmtSharp))
 		f += exprfmt(n.Right, nprec+1)
 		return f
@@ -1595,12 +1607,11 @@ func Sconv(s *Sym, flag int) string {
 	}
 
 	sf := flag
-	sm := setfmode(&flag)
-	var r int
-	_ = r
+	sm, sb := setfmode(&flag)
 	str := symfmt(s, flag)
 	flag = sf
 	fmtmode = sm
+	fmtbody = sb
 	return str
 }
 
@@ -1623,7 +1634,7 @@ func Tconv(t *Type, flag int) string {
 
 	t.Trecur++
 	sf := flag
-	sm := setfmode(&flag)
+	sm, sb := setfmode(&flag)
 
 	if fmtmode == FTypeId && (sf&obj.FmtUnsigned != 0) {
 		fmtpkgpfx++
@@ -1632,8 +1643,6 @@ func Tconv(t *Type, flag int) string {
 		flag |= obj.FmtUnsigned
 	}
 
-	var r int
-	_ = r
 	str := typefmt(t, flag)
 
 	if fmtmode == FTypeId && (sf&obj.FmtUnsigned != 0) {
@@ -1641,6 +1650,7 @@ func Tconv(t *Type, flag int) string {
 	}
 
 	flag = sf
+	fmtbody = sb
 	fmtmode = sm
 	t.Trecur--
 	return str
@@ -1658,10 +1668,8 @@ func Nconv(n *Node, flag int) string {
 		return "<N>"
 	}
 	sf := flag
-	sm := setfmode(&flag)
+	sm, sb := setfmode(&flag)
 
-	var r int
-	_ = r
 	var str string
 	switch fmtmode {
 	case FErr, FExp:
@@ -1673,10 +1681,11 @@ func Nconv(n *Node, flag int) string {
 		dumpdepth--
 
 	default:
-		Fatal("unhandled %%N mode")
+		Fatalf("unhandled %%N mode")
 	}
 
 	flag = sf
+	fmtbody = sb
 	fmtmode = sm
 	return str
 }
@@ -1693,9 +1702,7 @@ func Hconv(l *NodeList, flag int) string {
 	}
 
 	sf := flag
-	sm := setfmode(&flag)
-	var r int
-	_ = r
+	sm, sb := setfmode(&flag)
 	sep := "; "
 	if fmtmode == FDbg {
 		sep = "\n"
@@ -1712,6 +1719,7 @@ func Hconv(l *NodeList, flag int) string {
 	}
 
 	flag = sf
+	fmtbody = sb
 	fmtmode = sm
 	return buf.String()
 }

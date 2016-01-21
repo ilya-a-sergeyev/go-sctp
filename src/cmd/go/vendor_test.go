@@ -24,12 +24,14 @@ func TestVendorImports(t *testing.T) {
 	tg.run("list", "-f", "{{.ImportPath}} {{.Imports}}", "vend/...")
 	want := `
 		vend [vend/vendor/p r]
+		vend/dir1 []
 		vend/hello [fmt vend/vendor/strings]
 		vend/subdir [vend/vendor/p r]
 		vend/vendor/p []
 		vend/vendor/q []
 		vend/vendor/strings []
-		vend/x [vend/x/vendor/p vend/vendor/q vend/x/vendor/r]
+		vend/vendor/vend/dir1/dir2 []
+		vend/x [vend/x/vendor/p vend/vendor/q vend/x/vendor/r vend/dir1 vend/vendor/vend/dir1/dir2]
 		vend/x/invalid [vend/x/invalid/vendor/foo]
 		vend/x/vendor/p []
 		vend/x/vendor/p/p [notfound]
@@ -43,6 +45,14 @@ func TestVendorImports(t *testing.T) {
 	if have != want {
 		t.Errorf("incorrect go list output:\n%s", diffSortedOutputs(have, want))
 	}
+}
+
+func TestVendorBuild(t *testing.T) {
+	tg := testgo(t)
+	defer tg.cleanup()
+	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
+	tg.setenv("GO15VENDOREXPERIMENT", "1")
+	tg.run("build", "vend/x")
 }
 
 func TestVendorRun(t *testing.T) {
@@ -102,7 +112,7 @@ func TestVendorImportError(t *testing.T) {
 
 	re := regexp.MustCompile(`cannot find package "notfound" in any of:
 	.*[\\/]testdata[\\/]src[\\/]vend[\\/]x[\\/]vendor[\\/]notfound \(vendor tree\)
-	.*[\\/]testdata[\\/]src[\\/]vend[\\/]vendor[\\/]notfound \(vendor tree\)
+	.*[\\/]testdata[\\/]src[\\/]vend[\\/]vendor[\\/]notfound
 	.*[\\/]src[\\/]notfound \(from \$GOROOT\)
 	.*[\\/]testdata[\\/]src[\\/]notfound \(from \$GOPATH\)`)
 
@@ -187,6 +197,18 @@ func TestVendorGetUpdate(t *testing.T) {
 	tg.run("get", "-u", "github.com/rsc/go-get-issue-11864")
 }
 
+func TestGetSubmodules(t *testing.T) {
+	testenv.MustHaveExternalNetwork(t)
+
+	tg := testgo(t)
+	defer tg.cleanup()
+	tg.makeTempdir()
+	tg.setenv("GOPATH", tg.path("."))
+	tg.setenv("GO15VENDOREXPERIMENT", "1")
+	tg.run("get", "-d", "github.com/rsc/go-get-issue-12612")
+	tg.run("get", "-u", "-d", "github.com/rsc/go-get-issue-12612")
+}
+
 func TestVendorCache(t *testing.T) {
 	tg := testgo(t)
 	defer tg.cleanup()
@@ -243,4 +265,16 @@ func TestVendorList(t *testing.T) {
 
 	tg.run("list", "-f", `{{join .XTestImports "\n"}}`, "github.com/rsc/go-get-issue-11864/vendor/vendor.org/tx3")
 	tg.grepStdout("go-get-issue-11864/vendor/vendor.org/tx3", "did not find vendor-expanded tx3")
+}
+
+func TestVendor12156(t *testing.T) {
+	// Former index out of range panic.
+	tg := testgo(t)
+	defer tg.cleanup()
+	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata/testvendor2"))
+	tg.setenv("GO15VENDOREXPERIMENT", "1")
+	tg.cd(filepath.Join(tg.pwd(), "testdata/testvendor2/src/p"))
+	tg.runFail("build", "p.go")
+	tg.grepStderrNot("panic", "panicked")
+	tg.grepStderr(`cannot find package "x"`, "wrong error")
 }

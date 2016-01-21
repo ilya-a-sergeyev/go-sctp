@@ -9,10 +9,8 @@ import (
 	"fmt"
 )
 
-/*
- * portable half of code generator.
- * mainly statements and control flow.
- */
+// portable half of code generator.
+// mainly statements and control flow.
 var labellist *Label
 
 var lastlabel *Label
@@ -62,7 +60,7 @@ func addrescapes(n *Node) {
 			n.Name.Param.Stackparam.Type = n.Type
 			n.Name.Param.Stackparam.Addable = true
 			if n.Xoffset == BADWIDTH {
-				Fatal("addrescapes before param assignment")
+				Fatalf("addrescapes before param assignment")
 			}
 			n.Name.Param.Stackparam.Xoffset = n.Xoffset
 			fallthrough
@@ -135,7 +133,7 @@ func newlab(n *Node) *Label {
 			lab.Def = n
 		}
 	} else {
-		lab.Use = list(lab.Use, n)
+		lab.Use = append(lab.Use, n)
 	}
 
 	return lab
@@ -213,22 +211,18 @@ func stmtlabel(n *Node) *Label {
 	return nil
 }
 
-/*
- * compile statements
- */
+// compile statements
 func Genlist(l *NodeList) {
 	for ; l != nil; l = l.Next {
 		gen(l.N)
 	}
 }
 
-/*
- * generate code to start new proc running call n.
- */
+// generate code to start new proc running call n.
 func cgen_proc(n *Node, proc int) {
 	switch n.Left.Op {
 	default:
-		Fatal("cgen_proc: unknown call %v", Oconv(int(n.Left.Op), 0))
+		Fatalf("cgen_proc: unknown call %v", Oconv(int(n.Left.Op), 0))
 
 	case OCALLMETH:
 		cgen_callmeth(n.Left, proc)
@@ -241,18 +235,16 @@ func cgen_proc(n *Node, proc int) {
 	}
 }
 
-/*
- * generate declaration.
- * have to allocate heap copy
- * for escaped variables.
- */
+// generate declaration.
+// have to allocate heap copy
+// for escaped variables.
 func cgen_dcl(n *Node) {
 	if Debug['g'] != 0 {
 		Dump("\ncgen-dcl", n)
 	}
 	if n.Op != ONAME {
 		Dump("cgen_dcl", n)
-		Fatal("cgen_dcl")
+		Fatalf("cgen_dcl")
 	}
 
 	if n.Class&PHEAP == 0 {
@@ -267,9 +259,7 @@ func cgen_dcl(n *Node) {
 	Cgen_as(n.Name.Heapaddr, prealloc[n])
 }
 
-/*
- * generate discard of value
- */
+// generate discard of value
 func cgen_discard(nr *Node) {
 	if nr == nil {
 		return
@@ -324,9 +314,7 @@ func cgen_discard(nr *Node) {
 	}
 }
 
-/*
- * clearslim generates code to zero a slim node.
- */
+// clearslim generates code to zero a slim node.
 func Clearslim(n *Node) {
 	var z Node
 	z.Op = OLITERAL
@@ -362,24 +350,20 @@ func Clearslim(n *Node) {
 		Mpmovecfix(z.Val().U.(*Mpint), 0)
 
 	default:
-		Fatal("clearslim called on type %v", n.Type)
+		Fatalf("clearslim called on type %v", n.Type)
 	}
 
 	ullmancalc(&z)
 	Cgen(&z, n)
 }
 
-/*
- * generate:
- *	res = iface{typ, data}
- * n->left is typ
- * n->right is data
- */
+// generate:
+//	res = iface{typ, data}
+// n->left is typ
+// n->right is data
 func Cgen_eface(n *Node, res *Node) {
-	/*
-	 * the right node of an eface may contain function calls that uses res as an argument,
-	 * so it's important that it is done first
-	 */
+	// the right node of an eface may contain function calls that uses res as an argument,
+	// so it's important that it is done first
 
 	tmp := temp(Types[Tptr])
 	Cgen(n.Right, tmp)
@@ -395,13 +379,11 @@ func Cgen_eface(n *Node, res *Node) {
 	Cgen(n.Left, &dst)
 }
 
-/*
- * generate one of:
- *	res, resok = x.(T)
- *	res = x.(T) (when resok == nil)
- * n.Left is x
- * n.Type is T
- */
+// generate one of:
+//	res, resok = x.(T)
+//	res = x.(T) (when resok == nil)
+// n.Left is x
+// n.Type is T
 func cgen_dottype(n *Node, res, resok *Node, wb bool) {
 	if Debug_typeassert > 0 {
 		Warn("type assertion inlined")
@@ -487,12 +469,10 @@ func cgen_dottype(n *Node, res, resok *Node, wb bool) {
 	}
 }
 
-/*
- * generate:
- *	res, resok = x.(T)
- * n.Left is x
- * n.Type is T
- */
+// generate:
+//	res, resok = x.(T)
+// n.Left is x
+// n.Type is T
 func Cgen_As2dottype(n, res, resok *Node) {
 	if Debug_typeassert > 0 {
 		Warn("type assertion inlined")
@@ -551,11 +531,9 @@ func Cgen_As2dottype(n, res, resok *Node) {
 	Patch(q, Pc)
 }
 
-/*
- * gather series of offsets
- * >=0 is direct addressed field
- * <0 is pointer to next field (+1)
- */
+// gather series of offsets
+// >=0 is direct addressed field
+// <0 is pointer to next field (+1)
 func Dotoffset(n *Node, oary []int64, nn **Node) int {
 	var i int
 
@@ -563,7 +541,7 @@ func Dotoffset(n *Node, oary []int64, nn **Node) int {
 	case ODOT:
 		if n.Xoffset == BADWIDTH {
 			Dump("bad width in dotoffset", n)
-			Fatal("bad width in dotoffset")
+			Fatalf("bad width in dotoffset")
 		}
 
 		i = Dotoffset(n.Left, oary, nn)
@@ -584,7 +562,7 @@ func Dotoffset(n *Node, oary []int64, nn **Node) int {
 	case ODOTPTR:
 		if n.Xoffset == BADWIDTH {
 			Dump("bad width in dotoffset", n)
-			Fatal("bad width in dotoffset")
+			Fatalf("bad width in dotoffset")
 		}
 
 		i = Dotoffset(n.Left, oary, nn)
@@ -604,12 +582,10 @@ func Dotoffset(n *Node, oary []int64, nn **Node) int {
 	return i
 }
 
-/*
- * make a new off the books
- */
+// make a new off the books
 func Tempname(nn *Node, t *Type) {
 	if Curfn == nil {
-		Fatal("no curfn for tempname")
+		Fatalf("no curfn for tempname")
 	}
 
 	if t == nil {
@@ -631,6 +607,9 @@ func Tempname(nn *Node, t *Type) {
 	n.Esc = EscNever
 	n.Name.Curfn = Curfn
 	Curfn.Func.Dcl = list(Curfn.Func.Dcl, n)
+	if Debug['h'] != 0 {
+		println("H", n, n.Orig, funcSym(Curfn).Name)
+	}
 
 	dowidth(t)
 	n.Xoffset = 0
@@ -663,7 +642,7 @@ func gen(n *Node) {
 
 	switch n.Op {
 	default:
-		Fatal("gen: unknown op %v", Nconv(n, obj.FmtShort|obj.FmtSign))
+		Fatalf("gen: unknown op %v", Nconv(n, obj.FmtShort|obj.FmtSign))
 
 	case OCASE,
 		OFALL,
@@ -731,7 +710,7 @@ func gen(n *Node) {
 				break
 			}
 
-			lab.Used = 1
+			lab.Used = true
 			if lab.Breakpc == nil {
 				Yyerror("invalid break label %v", n.Left.Sym)
 				break
@@ -756,7 +735,7 @@ func gen(n *Node) {
 				break
 			}
 
-			lab.Used = 1
+			lab.Used = true
 			if lab.Continpc == nil {
 				Yyerror("invalid continue label %v", n.Left.Sym)
 				break
@@ -894,12 +873,15 @@ func gen(n *Node) {
 
 	case OVARKILL:
 		gvarkill(n.Left)
+
+	case OVARLIVE:
+		gvarlive(n.Left)
 	}
 
 ret:
 	if Anyregalloc() != wasregalloc {
 		Dump("node", n)
-		Fatal("registers left allocated")
+		Fatalf("registers left allocated")
 	}
 
 	lineno = lno
@@ -965,7 +947,7 @@ func cgen_callmeth(n *Node, proc int) {
 	l := n.Left
 
 	if l.Op != ODOTMETH {
-		Fatal("cgen_callmeth: not dotmethod: %v", l)
+		Fatalf("cgen_callmeth: not dotmethod: %v", l)
 	}
 
 	n2 := *n
@@ -988,26 +970,24 @@ func CgenTemp(n *Node) *Node {
 }
 
 func checklabels() {
-	var l *NodeList
-
 	for lab := labellist; lab != nil; lab = lab.Link {
 		if lab.Def == nil {
-			for l = lab.Use; l != nil; l = l.Next {
-				yyerrorl(int(l.N.Lineno), "label %v not defined", lab.Sym)
+			for _, n := range lab.Use {
+				yyerrorl(int(n.Lineno), "label %v not defined", lab.Sym)
 			}
 			continue
 		}
 
-		if lab.Use == nil && lab.Used == 0 {
+		if lab.Use == nil && !lab.Used {
 			yyerrorl(int(lab.Def.Lineno), "label %v defined and not used", lab.Sym)
 			continue
 		}
 
 		if lab.Gotopc != nil {
-			Fatal("label %v never resolved", lab.Sym)
+			Fatalf("label %v never resolved", lab.Sym)
 		}
-		for l = lab.Use; l != nil; l = l.Next {
-			checkgoto(l.N, lab.Def)
+		for _, n := range lab.Use {
+			checkgoto(n, lab.Def)
 		}
 	}
 }
@@ -1040,7 +1020,7 @@ func componentgen_wb(nr, nl *Node, wb bool) bool {
 	numPtr := 0
 	visitComponents(nl.Type, 0, func(t *Type, offset int64) bool {
 		n++
-		if int(Simtype[t.Etype]) == Tptr && t != itable {
+		if Simtype[t.Etype] == Tptr && t != itable {
 			numPtr++
 		}
 		return n <= maxMoves && (!wb || numPtr <= 1)
@@ -1138,7 +1118,7 @@ func componentgen_wb(nr, nl *Node, wb bool) bool {
 	nodr = *nr
 	if !cadable(nr) {
 		if nr.Ullman >= UINF && nodl.Op == OINDREG {
-			Fatal("miscompile")
+			Fatalf("miscompile")
 		}
 		Igen(nr, &nodr, nil)
 		defer Regfree(&nodr)
@@ -1157,9 +1137,9 @@ func componentgen_wb(nr, nl *Node, wb bool) bool {
 		ptrOffset int64
 	)
 	visitComponents(nl.Type, 0, func(t *Type, offset int64) bool {
-		if wb && int(Simtype[t.Etype]) == Tptr && t != itable {
+		if wb && Simtype[t.Etype] == Tptr && t != itable {
 			if ptrType != nil {
-				Fatal("componentgen_wb %v", Tconv(nl.Type, 0))
+				Fatalf("componentgen_wb %v", Tconv(nl.Type, 0))
 			}
 			ptrType = t
 			ptrOffset = offset
@@ -1199,7 +1179,7 @@ func visitComponents(t *Type, startOffset int64, f func(elem *Type, elemOffset i
 		// NOTE: Assuming little endian (signed top half at offset 4).
 		// We don't have any 32-bit big-endian systems.
 		if Thearch.Thechar != '5' && Thearch.Thechar != '8' {
-			Fatal("unknown 32-bit architecture")
+			Fatalf("unknown 32-bit architecture")
 		}
 		return f(Types[TUINT32], startOffset) &&
 			f(Types[TINT32], startOffset+4)
@@ -1222,7 +1202,6 @@ func visitComponents(t *Type, startOffset int64, f func(elem *Type, elemOffset i
 	case TINTER:
 		return f(itable, startOffset) &&
 			f(Ptrto(Types[TUINT8]), startOffset+int64(Widthptr))
-		return true
 
 	case TSTRING:
 		return f(Ptrto(Types[TUINT8]), startOffset) &&
@@ -1256,12 +1235,12 @@ func visitComponents(t *Type, startOffset int64, f func(elem *Type, elemOffset i
 			// in code introduced in CL 6932045 to fix issue #4518.
 			// But the test case in issue 4518 does not trigger this anymore,
 			// so maybe this complication is no longer needed.
-			Fatal("struct not at offset 0")
+			Fatalf("struct not at offset 0")
 		}
 
 		for field := t.Type; field != nil; field = field.Down {
 			if field.Etype != TFIELD {
-				Fatal("bad struct")
+				Fatalf("bad struct")
 			}
 			if !visitComponents(field.Type, startOffset+field.Width, f) {
 				return false
