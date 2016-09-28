@@ -9,7 +9,7 @@ Needless to so say, SCTP in Go is experimental and should be used with caution.
 ## Supported platforms 
 For now this will only work on [FreeBSD](https://www.freebsd.org/) and [macOS/OSX](http://www.apple.com/uk/macos/sierra). 
 
-FreeBSD comes with natiive support. On Mac OSX follow the instructions in the 
+FreeBSD comes with native SCTP support. On Mac OSX follow the instructions in the 
 [official SCTP repository](https://github.com/sctplab/SCTP_NKE_ElCapitan) to install the driver.
 
 Example server:
