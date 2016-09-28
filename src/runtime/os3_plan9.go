@@ -1,19 +1,24 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 package runtime
 
-import "unsafe"
+import (
+	"runtime/internal/sys"
+	"unsafe"
+)
 
 // May run during STW, so write barriers are not allowed.
-//go:nowritebarrier
+//
+//go:nowritebarrierrec
 func sighandler(_ureg *ureg, note *byte, gp *g) int {
 	_g_ := getg()
 	var t sigTabT
 	var docrash bool
 	var sig int
 	var flags int
+	var level int32
 
 	c := &sigctxt{_ureg}
 	notestr := gostringnocopy(note)
@@ -50,8 +55,8 @@ func sighandler(_ureg *ureg, note *byte, gp *g) int {
 		gp.sig = uint32(sig)
 		gp.sigpc = c.pc()
 
-		pc := uintptr(c.pc())
-		sp := uintptr(c.sp())
+		pc := c.pc()
+		sp := c.sp()
 
 		// If we don't recognize the PC as code
 		// but we do recognize the top pointer on the stack as code,
@@ -61,22 +66,37 @@ func sighandler(_ureg *ureg, note *byte, gp *g) int {
 			pc = 0
 		}
 
-		// Only push sigpanic if PC != 0.
-		//
+		// IF LR exists, sigpanictramp must save it to the stack
+		// before entry to sigpanic so that panics in leaf
+		// functions are correctly handled. This will smash
+		// the stack frame but we're not going back there
+		// anyway.
+		if usesLR {
+			c.savelr(c.lr())
+		}
+
 		// If PC == 0, probably panicked because of a call to a nil func.
-		// Not pushing that onto SP will make the trace look like a call
+		// Not faking that as the return address will make the trace look like a call
 		// to sigpanic instead. (Otherwise the trace will end at
 		// sigpanic and we won't get to see who faulted).
 		if pc != 0 {
-			if regSize > ptrSize {
-				sp -= ptrSize
-				*(*uintptr)(unsafe.Pointer(sp)) = 0
+			if usesLR {
+				c.setlr(pc)
+			} else {
+				if sys.RegSize > sys.PtrSize {
+					sp -= sys.PtrSize
+					*(*uintptr)(unsafe.Pointer(sp)) = 0
+				}
+				sp -= sys.PtrSize
+				*(*uintptr)(unsafe.Pointer(sp)) = pc
+				c.setsp(sp)
 			}
-			sp -= ptrSize
-			*(*uintptr)(unsafe.Pointer(sp)) = pc
-			c.setsp(sp)
 		}
-		c.setpc(funcPC(sigpanic))
+		if usesLR {
+			c.setpc(funcPC(sigpanictramp))
+		} else {
+			c.setpc(funcPC(sigpanic))
+		}
 		return _NCONT
 	}
 	if flags&_SigNotify != 0 {
@@ -97,9 +117,10 @@ Throw:
 	print(notestr, "\n")
 	print("PC=", hex(c.pc()), "\n")
 	print("\n")
-	if gotraceback(&docrash) > 0 {
+	level, _, docrash = gotraceback()
+	if level > 0 {
 		goroutineheader(gp)
-		tracebacktrap(c.pc(), c.sp(), 0, gp)
+		tracebacktrap(c.pc(), c.sp(), c.lr(), gp)
 		tracebackothers(gp)
 		print("\n")
 		dumpregs(_ureg)

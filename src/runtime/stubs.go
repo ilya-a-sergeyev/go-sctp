@@ -4,13 +4,10 @@
 
 package runtime
 
-import "unsafe"
-
-// Declarations for runtime services implemented in C or assembly.
-
-const ptrSize = 4 << (^uintptr(0) >> 63)             // unsafe.Sizeof(uintptr(0)) but an ideal const
-const regSize = 4 << (^uintreg(0) >> 63)             // unsafe.Sizeof(uintreg(0)) but an ideal const
-const spAlign = 1*(1-goarch_arm64) + 16*goarch_arm64 // SP alignment: 1 normally, 16 for ARM64
+import (
+	"runtime/internal/sys"
+	"unsafe"
+)
 
 // Should be a built-in for unsafe.Pointer?
 //go:nosplit
@@ -87,16 +84,16 @@ func reflect_memmove(to, from unsafe.Pointer, n uintptr) {
 var hashLoad = loadFactor
 
 // in asm_*.s
-func fastrand1() uint32
+func fastrand() uint32
 
 // in asm_*.s
 //go:noescape
-func memeq(a, b unsafe.Pointer, size uintptr) bool
+func memequal(a, b unsafe.Pointer, size uintptr) bool
 
 // noescape hides a pointer from escape analysis.  noescape is
 // the identity function but escape analysis doesn't think the
 // output depends on the input.  noescape is inlined and currently
-// compiles down to a single xor instruction.
+// compiles down to zero instructions.
 // USE CAREFULLY!
 //go:nosplit
 func noescape(p unsafe.Pointer) unsafe.Pointer {
@@ -104,7 +101,7 @@ func noescape(p unsafe.Pointer) unsafe.Pointer {
 	return unsafe.Pointer(x ^ 0)
 }
 
-func cgocallback(fn, frame unsafe.Pointer, framesize uintptr)
+func cgocallback(fn, frame unsafe.Pointer, framesize, ctxt uintptr)
 func gogo(buf *gobuf)
 func gosave(buf *gobuf)
 func mincore(addr unsafe.Pointer, n uintptr, dst *byte) int32
@@ -149,43 +146,7 @@ func goexit(neverCallThisFunction)
 // cgocallback_gofunc is not called from go, only from cgocallback,
 // so the arguments will be found via cgocallback's pointer-declared arguments.
 // See the assembly implementations for more details.
-func cgocallback_gofunc(fv uintptr, frame uintptr, framesize uintptr)
-
-//go:noescape
-func cas(ptr *uint32, old, new uint32) bool
-
-// NO go:noescape annotation; see atomic_pointer.go.
-func casp1(ptr *unsafe.Pointer, old, new unsafe.Pointer) bool
-
-func nop() // call to prevent inlining of function body
-
-//go:noescape
-func casuintptr(ptr *uintptr, old, new uintptr) bool
-
-//go:noescape
-func atomicstoreuintptr(ptr *uintptr, new uintptr)
-
-//go:noescape
-func atomicloaduintptr(ptr *uintptr) uintptr
-
-//go:noescape
-func atomicloaduint(ptr *uint) uint
-
-// TODO: Write native implementations of int64 atomic ops (or improve
-// inliner). These portable ones can't be inlined right now, so we're
-// taking an extra function call hit.
-
-func atomicstoreint64(ptr *int64, new int64) {
-	atomicstore64((*uint64)(unsafe.Pointer(ptr)), uint64(new))
-}
-
-func atomicloadint64(ptr *int64) int64 {
-	return int64(atomicload64((*uint64)(unsafe.Pointer(ptr))))
-}
-
-func xaddint64(ptr *int64, delta int64) int64 {
-	return int64(xadd64((*uint64)(unsafe.Pointer(ptr)), delta))
-}
+func cgocallback_gofunc(fv uintptr, frame uintptr, framesize, ctxt uintptr)
 
 // publicationBarrier performs a store/store barrier (a "publication"
 // or "export" barrier). Some form of synchronization is required
@@ -238,8 +199,10 @@ func setcallerpc(argp unsafe.Pointer, pc uintptr)
 //go:noescape
 func getcallerpc(argp unsafe.Pointer) uintptr
 
-//go:noescape
-func getcallersp(argp unsafe.Pointer) uintptr
+//go:nosplit
+func getcallersp(argp unsafe.Pointer) uintptr {
+	return uintptr(argp) - sys.MinFrameSize
+}
 
 //go:noescape
 func asmcgocall(fn, arg unsafe.Pointer) int32
@@ -248,6 +211,7 @@ func asmcgocall(fn, arg unsafe.Pointer) int32
 const _NoArgs = ^uintptr(0)
 
 func morestack()
+func morestack_noctxt()
 func rt0_go()
 
 // stackBarrier records that the stack has been unwound past a certain
@@ -312,3 +276,9 @@ func unixnanotime() int64 {
 func round(n, a uintptr) uintptr {
 	return (n + a - 1) &^ (a - 1)
 }
+
+// checkASM returns whether assembly runtime checks have passed.
+func checkASM() bool
+
+func memequal_varlen(a, b unsafe.Pointer) bool
+func eqstring(s1, s2 string) bool

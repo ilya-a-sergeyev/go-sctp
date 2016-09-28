@@ -1,4 +1,4 @@
-// Copyright 2015 The Go Authors.  All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -21,6 +21,13 @@ const (
 	constThree = 3 // Comment on line with constThree.
 )
 
+// Const block where first entry is unexported.
+const (
+	constFour = iota
+	ConstFive
+	ConstSix
+)
+
 // Variables
 
 // Comment about exported variable.
@@ -37,6 +44,13 @@ var (
 	varThree = 3 // Comment on line with varThree.
 )
 
+// Var block where first entry is unexported.
+var (
+	varFour = 4
+	VarFive = 5
+	varSix  = 6
+)
+
 // Comment about exported function.
 func ExportedFunc(a int) bool
 
@@ -46,8 +60,14 @@ func internalFunc(a int) bool
 // Comment about exported type.
 type ExportedType struct {
 	// Comment before exported field.
-	ExportedField   int
-	unexportedField int // Comment on line with unexported field.
+	ExportedField         int // Comment on line with exported field.
+	unexportedField       int // Comment on line with unexported field.
+	ExportedEmbeddedType      // Comment on line with exported embedded field.
+	*ExportedEmbeddedType     // Comment on line with exported embedded *field.
+	unexportedType            // Comment on line with unexported embedded field.
+	*unexportedType           // Comment on line with unexported embedded *field.
+	io.Reader                 // Comment on line with embedded Reader.
+	error                     // Comment on line with embedded error.
 }
 
 // Comment about exported method.
@@ -73,6 +93,15 @@ func ExportedTypeConstructor() *ExportedType {
 
 const unexportedTypedConstant ExportedType = 1 // In a separate section to test -u.
 
+// Comment about exported interface.
+type ExportedInterface interface {
+	// Comment before exported method.
+	ExportedMethod()   // Comment on line with exported method.
+	unexportedMethod() // Comment on line with unexported method.
+	io.Reader          // Comment on line with embedded Reader.
+	error              // Comment on line with embedded error.
+}
+
 // Comment about unexported type.
 type unexportedType int
 
@@ -94,3 +123,6 @@ const unexportedTypedConstant unexportedType = 1 // In a separate section to tes
 // For case matching.
 const CaseMatch = 1
 const Casematch = 2
+
+func ReturnUnexported() unexportedType { return 0 }
+func ReturnExported() ExportedType     { return ExportedType{} }

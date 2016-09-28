@@ -1,41 +1,41 @@
 // run
 
-// Copyright 2015 The Go Authors.  All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 package main
 
+// Tests for golang.org/issue/11326.
+
 func main() {
-	/* TODO(rsc): Should work but does not. See golang.org/issue/11326.
 	{
-		const n = 1e2147483647
-		const d = 1e2147483646
+		const n = 1e646456992
+		const d = 1e646456991
 		x := n / d
 		if x != 10.0 {
 			println("incorrect value:", x)
 		}
 	}
 	{
-		const n = 1e214748364
-		const d = 1e214748363
-		x := n / d
-		if x != 10.0 {
-			println("incorrect value:", x)
-		}
-	}
-	*/
-	{
-		const n = 1e21474836
-		const d = 1e21474835
+		const n = 1e64645699
+		const d = 1e64645698
 		x := n / d
 		if x != 10.0 {
 			println("incorrect value:", x)
 		}
 	}
 	{
-		const n = 1e2147483
-		const d = 1e2147482
+		const n = 1e6464569
+		const d = 1e6464568
+		x := n / d
+		if x != 10.0 {
+			println("incorrect value:", x)
+		}
+	}
+	{
+		const n = 1e646456
+		const d = 1e646455
 		x := n / d
 		if x != 10.0 {
 			println("incorrect value:", x)

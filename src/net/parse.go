@@ -10,6 +10,8 @@ package net
 import (
 	"io"
 	"os"
+	"time"
+	_ "unsafe" // For go:linkname
 )
 
 type file struct {
@@ -70,14 +72,19 @@ func open(name string) (*file, error) {
 	return &file{fd, make([]byte, 0, os.Getpagesize()), false}, nil
 }
 
-func byteIndex(s string, c byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == c {
-			return i
-		}
+func stat(name string) (mtime time.Time, size int64, err error) {
+	st, err := os.Stat(name)
+	if err != nil {
+		return time.Time{}, 0, err
 	}
-	return -1
+	return st.ModTime(), st.Size(), nil
 }
+
+// byteIndex is strings.IndexByte. It returns the index of the
+// first instance of c in s, or -1 if c is not present in s.
+// strings.IndexByte is implemented in  runtime/asm_$GOARCH.s
+//go:linkname byteIndex strings.IndexByte
+func byteIndex(s string, c byte) int
 
 // Count occurrences in s of any bytes in t.
 func countAnyByte(s string, t string) int {
@@ -98,14 +105,14 @@ func splitAtBytes(s string, t string) []string {
 	for i := 0; i < len(s); i++ {
 		if byteIndex(t, s[i]) >= 0 {
 			if last < i {
-				a[n] = string(s[last:i])
+				a[n] = s[last:i]
 				n++
 			}
 			last = i + 1
 		}
 	}
 	if last < len(s) {
-		a[n] = string(s[last:])
+		a[n] = s[last:]
 		n++
 	}
 	return a[0:n]
@@ -116,27 +123,27 @@ func getFields(s string) []string { return splitAtBytes(s, " \r\t\n") }
 // Bigger than we need, not too big to worry about overflow
 const big = 0xFFFFFF
 
-// Decimal to integer starting at &s[i0].
-// Returns number, new offset, success.
-func dtoi(s string, i0 int) (n int, i int, ok bool) {
+// Decimal to integer.
+// Returns number, characters consumed, success.
+func dtoi(s string) (n int, i int, ok bool) {
 	n = 0
-	for i = i0; i < len(s) && '0' <= s[i] && s[i] <= '9'; i++ {
+	for i = 0; i < len(s) && '0' <= s[i] && s[i] <= '9'; i++ {
 		n = n*10 + int(s[i]-'0')
 		if n >= big {
-			return 0, i, false
+			return big, i, false
 		}
 	}
-	if i == i0 {
-		return 0, i, false
+	if i == 0 {
+		return 0, 0, false
 	}
 	return n, i, true
 }
 
-// Hexadecimal to integer starting at &s[i0].
-// Returns number, new offset, success.
-func xtoi(s string, i0 int) (n int, i int, ok bool) {
+// Hexadecimal to integer.
+// Returns number, characters consumed, success.
+func xtoi(s string) (n int, i int, ok bool) {
 	n = 0
-	for i = i0; i < len(s); i++ {
+	for i = 0; i < len(s); i++ {
 		if '0' <= s[i] && s[i] <= '9' {
 			n *= 16
 			n += int(s[i] - '0')
@@ -153,7 +160,7 @@ func xtoi(s string, i0 int) (n int, i int, ok bool) {
 			return 0, i, false
 		}
 	}
-	if i == i0 {
+	if i == 0 {
 		return 0, i, false
 	}
 	return n, i, true
@@ -167,7 +174,7 @@ func xtoi2(s string, e byte) (byte, bool) {
 	if len(s) > 2 && s[2] != e {
 		return 0, false
 	}
-	n, ei, ok := xtoi(s[:2], 0)
+	n, ei, ok := xtoi(s[:2])
 	return byte(n), ok && ei == 2
 }
 
@@ -314,14 +321,9 @@ func foreachField(x []byte, fn func(field []byte) error) error {
 
 // bytesIndexByte is bytes.IndexByte. It returns the index of the
 // first instance of c in s, or -1 if c is not present in s.
-func bytesIndexByte(s []byte, c byte) int {
-	for i, b := range s {
-		if b == c {
-			return i
-		}
-	}
-	return -1
-}
+// bytes.IndexByte is implemented in  runtime/asm_$GOARCH.s
+//go:linkname bytesIndexByte bytes.IndexByte
+func bytesIndexByte(s []byte, c byte) int
 
 // stringsHasSuffix is strings.HasSuffix. It reports whether s ends in
 // suffix.

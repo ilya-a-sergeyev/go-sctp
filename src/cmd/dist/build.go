@@ -1,4 +1,4 @@
-// Copyright 2012 The Go Authors.  All rights reserved.
+// Copyright 2012 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -6,12 +6,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 )
 
 // Initialization for any invocation.
@@ -28,6 +31,7 @@ var (
 	goroot           string
 	goroot_final     string
 	goextlinkenabled string
+	gogcflags        string // For running built compiler
 	workdir          string
 	tooldir          string
 	oldgoos          string
@@ -42,8 +46,7 @@ var (
 	rebuildall       bool
 	defaultclang     bool
 
-	sflag bool // build static binaries
-	vflag int  // verbosity
+	vflag int // verbosity
 )
 
 // The known architectures.
@@ -53,8 +56,11 @@ var okgoarch = []string{
 	"amd64p32",
 	"arm",
 	"arm64",
+	"mips64",
+	"mips64le",
 	"ppc64",
 	"ppc64le",
+	"s390x",
 }
 
 // The known operating systems.
@@ -161,6 +167,8 @@ func xinit() {
 		}
 		goextlinkenabled = b
 	}
+
+	gogcflags = os.Getenv("BOOT_GO_GCFLAGS")
 
 	b = os.Getenv("CC")
 	if b == "" {
@@ -280,7 +288,7 @@ func findgoversion() string {
 	}
 
 	// The $GOROOT/VERSION.cache file is a cache to avoid invoking
-	// git every time we run this command.  Unlike VERSION, it gets
+	// git every time we run this command. Unlike VERSION, it gets
 	// deleted by the clean command.
 	path = pathf("%s/VERSION.cache", goroot)
 	if isfile(path) {
@@ -319,18 +327,15 @@ func findgoversion() string {
 
 // isGitRepo reports whether the working directory is inside a Git repository.
 func isGitRepo() bool {
-	p := ".git"
-	for {
-		fi, err := os.Stat(p)
-		if os.IsNotExist(err) {
-			p = filepath.Join("..", p)
-			continue
-		}
-		if err != nil || !fi.IsDir() {
-			return false
-		}
-		return true
+	// NB: simply checking the exit code of `git rev-parse --git-dir` would
+	// suffice here, but that requires deviating from the infrastructure
+	// provided by `run`.
+	gitDir := chomp(run(goroot, 0, "git", "rev-parse", "--git-dir"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(goroot, gitDir)
 	}
+	fi, err := os.Stat(gitDir)
+	return err == nil && fi.IsDir()
 }
 
 /*
@@ -398,8 +403,8 @@ func setup() {
 
 	// Create object directory.
 	// We keep it in pkg/ so that all the generated binaries
-	// are in one tree.  If pkg/obj/libgc.a exists, it is a dreg from
-	// before we used subdirectories of obj.  Delete all of obj
+	// are in one tree. If pkg/obj/libgc.a exists, it is a dreg from
+	// before we used subdirectories of obj. Delete all of obj
 	// to clean up.
 	if p := pathf("%s/pkg/obj/libgc.a", goroot); isfile(p) {
 		xremoveall(pathf("%s/pkg/obj", goroot))
@@ -459,9 +464,13 @@ var deptab = []struct {
 }{
 	{"cmd/go", []string{
 		"zdefaultcc.go",
+		"zosarch.go",
 	}},
-	{"runtime", []string{
+	{"runtime/internal/sys", []string{
 		"zversion.go",
+	}},
+	{"go/build", []string{
+		"zcgo.go",
 	}},
 }
 
@@ -477,7 +486,9 @@ var gentab = []struct {
 	gen        func(string, string)
 }{
 	{"zdefaultcc.go", mkzdefaultcc},
+	{"zosarch.go", mkzosarch},
 	{"zversion.go", mkzversion},
+	{"zcgo.go", mkzcgo},
 
 	// not generated anymore, but delete the file if we see it
 	{"enam.c", nil},
@@ -487,9 +498,20 @@ var gentab = []struct {
 	{"anames9.c", nil},
 }
 
+// installed maps from a dir name (as given to install) to a chan
+// closed when the dir's package is installed.
+var installed = make(map[string]chan struct{})
+
 // install installs the library, package, or binary associated with dir,
 // which is relative to $GOROOT/src.
 func install(dir string) {
+	if ch, ok := installed[dir]; ok {
+		defer close(ch)
+	}
+	for _, dep := range builddeps[dir] {
+		<-installed[dep]
+	}
+
 	if vflag > 0 {
 		if goos != gohostos || goarch != gohostarch {
 			errprintf("%s (%s/%s)\n", dir, goos, goarch)
@@ -497,6 +519,9 @@ func install(dir string) {
 			errprintf("%s\n", dir)
 		}
 	}
+
+	workdir := pathf("%s/%s", workdir, dir)
+	xmkdirall(workdir)
 
 	var clean []string
 	defer func() {
@@ -603,13 +628,15 @@ func install(dir string) {
 	}
 
 	// For package runtime, copy some files into the work space.
-	if dir == "runtime" {
+	if dir == "runtime" || strings.HasPrefix(dir, "runtime/internal/") {
 		xmkdirall(pathf("%s/pkg/include", goroot))
 		// For use by assembly and C files.
 		copyfile(pathf("%s/pkg/include/textflag.h", goroot),
 			pathf("%s/src/runtime/textflag.h", goroot), 0)
 		copyfile(pathf("%s/pkg/include/funcdata.h", goroot),
 			pathf("%s/src/runtime/funcdata.h", goroot), 0)
+		copyfile(pathf("%s/pkg/include/asm_ppc64x.h", goroot),
+			pathf("%s/src/runtime/asm_ppc64x.h", goroot), 0)
 	}
 
 	// Generate any missing files; regenerate existing ones.
@@ -666,6 +693,9 @@ func install(dir string) {
 		archive = b
 	}
 	compile := []string{pathf("%s/compile", tooldir), "-pack", "-o", b, "-p", pkg}
+	if gogcflags != "" {
+		compile = append(compile, strings.Fields(gogcflags)...)
+	}
 	if dir == "runtime" {
 		compile = append(compile, "-+", "-asmhdr", pathf("%s/go_asm.h", workdir))
 	}
@@ -673,6 +703,7 @@ func install(dir string) {
 	run(path, CheckExit|ShowOutput, compile...)
 
 	// Compile the files.
+	var wg sync.WaitGroup
 	for _, p := range files {
 		if !strings.HasSuffix(p, ".s") {
 			continue
@@ -695,14 +726,14 @@ func install(dir string) {
 		// Change the last character of the output file (which was c or s).
 		b = b[:len(b)-1] + "o"
 		compile = append(compile, "-o", b, p)
-		bgrun(path, compile...)
+		bgrun(&wg, path, compile...)
 
 		link = append(link, b)
 		if doclean {
 			clean = append(clean, b)
 		}
 	}
-	bgwait()
+	bgwait(&wg)
 
 	if ispackcmd {
 		xremove(link[targ])
@@ -737,7 +768,7 @@ func matchtag(tag string) bool {
 		}
 		return !matchtag(tag[1:])
 	}
-	return tag == goos || tag == goarch || tag == "cmd_go_bootstrap" || tag == "go1.1" || (goos == "android" && tag == "linux")
+	return tag == "gc" || tag == goos || tag == goarch || tag == "cmd_go_bootstrap" || tag == "go1.1" || (goos == "android" && tag == "linux")
 }
 
 // shouldbuild reports whether we should build this file.
@@ -781,10 +812,15 @@ func shouldbuild(file, dir string) bool {
 		if p == "" {
 			continue
 		}
-		if strings.Contains(p, "package documentation") {
+		code := p
+		i := strings.Index(code, "//")
+		if i > 0 {
+			code = strings.TrimSpace(code[:i])
+		}
+		if code == "package documentation" {
 			return false
 		}
-		if strings.Contains(p, "package main") && dir != "cmd/go" && dir != "cmd/cgo" {
+		if code == "package main" && dir != "cmd/go" && dir != "cmd/cgo" {
 			return false
 		}
 		if !strings.HasPrefix(p, "//") {
@@ -793,11 +829,11 @@ func shouldbuild(file, dir string) bool {
 		if !strings.Contains(p, "+build") {
 			continue
 		}
-		fields := splitfields(p)
-		if len(fields) < 2 || fields[1] != "+build" {
+		fields := splitfields(p[2:])
+		if len(fields) < 1 || fields[0] != "+build" {
 			continue
 		}
-		for _, p := range fields[2:] {
+		for _, p := range fields[1:] {
 			if matchfield(p) {
 				goto fieldmatch
 			}
@@ -839,62 +875,19 @@ func dopack(dst, src string, extra []string) {
 	writefile(bdst.String(), dst, 0)
 }
 
-// buildorder records the order of builds for the 'go bootstrap' command.
-// The Go packages and commands must be in dependency order,
-// maintained by hand, but the order doesn't change often.
-var buildorder = []string{
-	// Go libraries and programs for bootstrap.
-	"runtime",
-	"errors",
-	"sync/atomic",
-	"sync",
-	"internal/singleflight",
-	"io",
-	"unicode",
-	"unicode/utf8",
-	"unicode/utf16",
-	"bytes",
-	"math",
-	"strings",
-	"strconv",
-	"bufio",
-	"sort",
-	"container/heap",
-	"encoding/base64",
-	"syscall",
-	"internal/syscall/windows/registry",
-	"time",
-	"internal/syscall/windows",
-	"os",
-	"reflect",
-	"fmt",
-	"encoding",
-	"encoding/binary",
-	"encoding/json",
-	"flag",
-	"path/filepath",
-	"path",
-	"io/ioutil",
-	"log",
-	"regexp/syntax",
-	"regexp",
-	"go/token",
-	"go/scanner",
-	"go/ast",
-	"go/parser",
-	"os/exec",
-	"os/signal",
-	"net/url",
-	"text/template/parse",
-	"text/template",
-	"go/doc",
-	"go/build",
-	"hash",
-	"crypto",
-	"crypto/sha1",
-	"debug/dwarf",
-	"debug/elf",
-	"cmd/go",
+// builddeps records the build dependencies for the 'go bootstrap' command.
+// It is a map[string][]string and generated by mkdeps.bash into deps.go.
+
+// buildlist is the list of directories being built, sorted by name.
+var buildlist = makeBuildlist()
+
+func makeBuildlist() []string {
+	var all []string
+	for dir := range builddeps {
+		all = append(all, dir)
+	}
+	sort.Strings(all)
+	return all
 }
 
 var runtimegen = []string{
@@ -903,7 +896,7 @@ var runtimegen = []string{
 }
 
 func clean() {
-	for _, name := range buildorder {
+	for _, name := range buildlist {
 		path := pathf("%s/src/%s", goroot, name)
 		// Remove generated files.
 		for _, elem := range xreaddir(path) {
@@ -932,6 +925,8 @@ func clean() {
 		// Remove installed packages and tools.
 		xremoveall(pathf("%s/pkg/%s_%s", goroot, gohostos, gohostarch))
 		xremoveall(pathf("%s/pkg/%s_%s", goroot, goos, goarch))
+		xremoveall(pathf("%s/pkg/%s_%s_race", goroot, gohostos, gohostarch))
+		xremoveall(pathf("%s/pkg/%s_%s_race", goroot, goos, goarch))
 		xremoveall(tooldir)
 
 		// Remove cached version info.
@@ -952,6 +947,7 @@ func usage() {
 		"clean          deletes all built files\n" +
 		"env [-p]       print environment (-p: include $PATH)\n" +
 		"install [dir]  install individual directory\n" +
+		"list [-json]   list all supported platforms\n" +
 		"test [-h]      run Go test(s)\n" +
 		"version        print Go version\n" +
 		"\n" +
@@ -1004,7 +1000,6 @@ func cmdenv() {
 // stopping at having installed the go_bootstrap command.
 func cmdbootstrap() {
 	flag.BoolVar(&rebuildall, "a", rebuildall, "rebuild all")
-	flag.BoolVar(&sflag, "s", sflag, "build static binaries")
 	xflagparse(0)
 
 	if isdir(pathf("%s/src/pkg", goroot)) {
@@ -1044,19 +1039,30 @@ func cmdbootstrap() {
 	// than in a standard release like Go 1.4, so don't do this rebuild by default.
 	if false {
 		xprintf("##### Building Go toolchain using itself.\n")
-		for _, dir := range buildorder {
-			if dir == "cmd/go" {
-				break
-			}
-			install(dir)
+		for _, dir := range buildlist {
+			installed[dir] = make(chan struct{})
 		}
+		var wg sync.WaitGroup
+		for _, dir := range builddeps["cmd/go"] {
+			wg.Add(1)
+			dir := dir
+			go func() {
+				defer wg.Done()
+				install(dir)
+			}()
+		}
+		wg.Wait()
 		xprintf("\n")
 	}
 
 	xprintf("##### Building go_bootstrap for host, %s/%s.\n", gohostos, gohostarch)
-	for _, dir := range buildorder {
-		install(dir)
+	for _, dir := range buildlist {
+		installed[dir] = make(chan struct{})
 	}
+	for _, dir := range buildlist {
+		go install(dir)
+	}
+	<-installed["cmd/go"]
 
 	goos = oldgoos
 	goarch = oldgoarch
@@ -1065,13 +1071,18 @@ func cmdbootstrap() {
 
 	// Build runtime for actual goos/goarch too.
 	if goos != gohostos || goarch != gohostarch {
+		installed["runtime"] = make(chan struct{})
 		install("runtime")
 	}
 }
 
-// Copied from go/build/build.go.
 // Cannot use go/build directly because cmd/dist for a new release
 // builds against an old release's go/build, which may be out of sync.
+// To reduce duplication, we generate the list for go/build from this.
+//
+// We list all supported platforms in this list, so that this is the
+// single point of truth for supported platforms. This list is used
+// by 'go tool dist list'.
 var cgoEnabled = map[string]bool{
 	"darwin/386":      true,
 	"darwin/amd64":    true,
@@ -1080,19 +1091,32 @@ var cgoEnabled = map[string]bool{
 	"dragonfly/amd64": true,
 	"freebsd/386":     true,
 	"freebsd/amd64":   true,
+	"freebsd/arm":     false,
 	"linux/386":       true,
 	"linux/amd64":     true,
 	"linux/arm":       true,
 	"linux/arm64":     true,
+	"linux/ppc64":     false,
 	"linux/ppc64le":   true,
+	"linux/mips64":    true,
+	"linux/mips64le":  true,
+	"linux/s390x":     true,
 	"android/386":     true,
 	"android/amd64":   true,
 	"android/arm":     true,
+	"android/arm64":   true,
+	"nacl/386":        false,
+	"nacl/amd64p32":   false,
+	"nacl/arm":        false,
 	"netbsd/386":      true,
 	"netbsd/amd64":    true,
 	"netbsd/arm":      true,
 	"openbsd/386":     true,
 	"openbsd/amd64":   true,
+	"openbsd/arm":     false,
+	"plan9/386":       false,
+	"plan9/amd64":     false,
+	"plan9/arm":       false,
 	"solaris/amd64":   true,
 	"windows/386":     true,
 	"windows/amd64":   true,
@@ -1112,11 +1136,15 @@ func checkCC() {
 	if !needCC() {
 		return
 	}
-	if _, err := exec.Command(defaultcc, "--help").Output(); err != nil {
+	if output, err := exec.Command(defaultcc, "--help").CombinedOutput(); err != nil {
+		outputHdr := ""
+		if len(output) > 0 {
+			outputHdr = "\nCommand output:\n\n"
+		}
 		fatal("cannot invoke C compiler %q: %v\n\n"+
 			"Go needs a system C compiler for use with cgo.\n"+
-			"To set a C compiler, export CC=the-compiler.\n"+
-			"To disable cgo, export CGO_ENABLED=0.\n", defaultcc, err)
+			"To set a C compiler, set CC=the-compiler.\n"+
+			"To disable cgo, set CGO_ENABLED=0.\n%s%s", defaultcc, err, outputHdr, output)
 	}
 }
 
@@ -1132,7 +1160,7 @@ func defaulttarg() string {
 		fatal("current directory %s is not under %s", pwd, real_src)
 	}
 	pwd = pwd[len(real_src):]
-	// guard againt xrealwd return the directory without the trailing /
+	// guard against xrealwd returning the directory without the trailing /
 	pwd = strings.TrimPrefix(pwd, "/")
 
 	return pwd
@@ -1140,7 +1168,6 @@ func defaulttarg() string {
 
 // Install installs the list of packages named on the command line.
 func cmdinstall() {
-	flag.BoolVar(&sflag, "s", sflag, "build static binaries")
 	xflagparse(-1)
 
 	if flag.NArg() == 0 {
@@ -1199,4 +1226,44 @@ func cmdbanner() {
 func cmdversion() {
 	xflagparse(0)
 	xprintf("%s\n", findgoversion())
+}
+
+// cmdlist lists all supported platforms.
+func cmdlist() {
+	jsonFlag := flag.Bool("json", false, "produce JSON output")
+	xflagparse(0)
+
+	var plats []string
+	for p := range cgoEnabled {
+		plats = append(plats, p)
+	}
+	sort.Strings(plats)
+
+	if !*jsonFlag {
+		for _, p := range plats {
+			xprintf("%s\n", p)
+		}
+		return
+	}
+
+	type jsonResult struct {
+		GOOS         string
+		GOARCH       string
+		CgoSupported bool
+	}
+	var results []jsonResult
+	for _, p := range plats {
+		fields := strings.Split(p, "/")
+		results = append(results, jsonResult{
+			GOOS:         fields[0],
+			GOARCH:       fields[1],
+			CgoSupported: cgoEnabled[p]})
+	}
+	out, err := json.MarshalIndent(results, "", "\t")
+	if err != nil {
+		fatal("json marshal error: %v", err)
+	}
+	if _, err := os.Stdout.Write(out); err != nil {
+		fatal("write failed: %v", err)
+	}
 }

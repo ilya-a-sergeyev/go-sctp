@@ -5,11 +5,15 @@
 package ld
 
 import (
+	"cmd/internal/bio"
 	"cmd/internal/obj"
+	"cmd/internal/sys"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -103,19 +107,19 @@ type PeSym struct {
 	type_   uint16
 	sclass  uint8
 	aux     uint8
-	sym     *LSym
+	sym     *Symbol
 }
 
 type PeSect struct {
 	name string
 	base []byte
 	size uint64
-	sym  *LSym
+	sym  *Symbol
 	sh   IMAGE_SECTION_HEADER
 }
 
 type PeObj struct {
-	f      *obj.Biobuf
+	f      *bio.Reader
 	name   string
 	base   uint32
 	sect   []PeSect
@@ -126,14 +130,14 @@ type PeObj struct {
 	snames []byte
 }
 
-func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
-	if Debug['v'] != 0 {
-		fmt.Fprintf(&Bso, "%5.2f ldpe %s\n", obj.Cputime(), pn)
+func ldpe(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
+	if ctxt.Debugvlog != 0 {
+		ctxt.Logf("%5.2f ldpe %s\n", obj.Cputime(), pn)
 	}
 
 	var sect *PeSect
-	Ctxt.Version++
-	base := int32(obj.Boffset(f))
+	localSymVersion := ctxt.Syms.IncVersion()
+	base := f.Offset()
 
 	peobj := new(PeObj)
 	peobj.f = f
@@ -149,7 +153,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 	var r []Reloc
 	var rp *Reloc
 	var rsect *PeSect
-	var s *LSym
+	var s *Symbol
 	var sym *PeSym
 	var symbuf [18]uint8
 	if err = binary.Read(f, binary.LittleEndian, &peobj.fh); err != nil {
@@ -171,15 +175,15 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 	// TODO return error if found .cormeta
 
 	// load string table
-	obj.Bseek(f, int64(base)+int64(peobj.fh.PointerToSymbolTable)+int64(len(symbuf))*int64(peobj.fh.NumberOfSymbols), 0)
+	f.Seek(base+int64(peobj.fh.PointerToSymbolTable)+int64(len(symbuf))*int64(peobj.fh.NumberOfSymbols), 0)
 
-	if obj.Bread(f, symbuf[:4]) != 4 {
+	if _, err := io.ReadFull(f, symbuf[:4]); err != nil {
 		goto bad
 	}
 	l = Le32(symbuf[:])
 	peobj.snames = make([]byte, l)
-	obj.Bseek(f, int64(base)+int64(peobj.fh.PointerToSymbolTable)+int64(len(symbuf))*int64(peobj.fh.NumberOfSymbols), 0)
-	if obj.Bread(f, peobj.snames) != len(peobj.snames) {
+	f.Seek(base+int64(peobj.fh.PointerToSymbolTable)+int64(len(symbuf))*int64(peobj.fh.NumberOfSymbols), 0)
+	if _, err := io.ReadFull(f, peobj.snames); err != nil {
 		goto bad
 	}
 
@@ -191,18 +195,18 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		if peobj.sect[i].name[0] != '/' {
 			continue
 		}
-		l = uint32(obj.Atoi(peobj.sect[i].name[1:]))
-		peobj.sect[i].name = cstring(peobj.snames[l:])
+		n, _ := strconv.Atoi(peobj.sect[i].name[1:])
+		peobj.sect[i].name = cstring(peobj.snames[n:])
 	}
 
 	// read symbols
 	peobj.pesym = make([]PeSym, peobj.fh.NumberOfSymbols)
 
 	peobj.npesym = uint(peobj.fh.NumberOfSymbols)
-	obj.Bseek(f, int64(base)+int64(peobj.fh.PointerToSymbolTable), 0)
+	f.Seek(base+int64(peobj.fh.PointerToSymbolTable), 0)
 	for i := 0; uint32(i) < peobj.fh.NumberOfSymbols; i += numaux + 1 {
-		obj.Bseek(f, int64(base)+int64(peobj.fh.PointerToSymbolTable)+int64(len(symbuf))*int64(i), 0)
-		if obj.Bread(f, symbuf[:]) != len(symbuf) {
+		f.Seek(base+int64(peobj.fh.PointerToSymbolTable)+int64(len(symbuf))*int64(i), 0)
+		if _, err := io.ReadFull(f, symbuf[:]); err != nil {
 			goto bad
 		}
 
@@ -233,7 +237,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 
 		if sect.sh.Characteristics&(IMAGE_SCN_CNT_CODE|IMAGE_SCN_CNT_INITIALIZED_DATA|IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0 {
 			// This has been seen for .idata sections, which we
-			// want to ignore.  See issues 5106 and 5273.
+			// want to ignore. See issues 5106 and 5273.
 			continue
 		}
 
@@ -242,7 +246,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		}
 
 		name = fmt.Sprintf("%s(%s)", pkg, sect.name)
-		s = Linklookup(Ctxt, name, Ctxt.Version)
+		s = ctxt.Syms.Lookup(name, localSymVersion)
 
 		switch sect.sh.Characteristics & (IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE) {
 		case IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ: //.rdata
@@ -267,7 +271,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		s.Size = int64(sect.size)
 		sect.sym = s
 		if sect.name == ".rsrc" {
-			setpersrc(sect.sym)
+			setpersrc(ctxt, sect.sym)
 		}
 	}
 
@@ -282,21 +286,21 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		}
 		if sect.sh.Characteristics&(IMAGE_SCN_CNT_CODE|IMAGE_SCN_CNT_INITIALIZED_DATA|IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0 {
 			// This has been seen for .idata sections, which we
-			// want to ignore.  See issues 5106 and 5273.
+			// want to ignore. See issues 5106 and 5273.
 			continue
 		}
 
 		r = make([]Reloc, rsect.sh.NumberOfRelocations)
-		obj.Bseek(f, int64(peobj.base)+int64(rsect.sh.PointerToRelocations), 0)
+		f.Seek(int64(peobj.base)+int64(rsect.sh.PointerToRelocations), 0)
 		for j = 0; j < int(rsect.sh.NumberOfRelocations); j++ {
 			rp = &r[j]
-			if obj.Bread(f, symbuf[:10]) != 10 {
+			if _, err := io.ReadFull(f, symbuf[:10]); err != nil {
 				goto bad
 			}
 			rva := Le32(symbuf[0:])
 			symindex := Le32(symbuf[4:])
 			type_ := Le16(symbuf[8:])
-			if err = readpesym(peobj, int(symindex), &sym); err != nil {
+			if err = readpesym(ctxt, peobj, int(symindex), &sym, localSymVersion); err != nil {
 				goto bad
 			}
 			if sym.sym == nil {
@@ -309,7 +313,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 			rp.Off = int32(rva)
 			switch type_ {
 			default:
-				Diag("%s: unknown relocation type %d;", pn, type_)
+				Errorf(rsect.sym, "%s: unknown relocation type %d;", pn, type_)
 				fallthrough
 
 			case IMAGE_REL_I386_REL32, IMAGE_REL_AMD64_REL32,
@@ -367,7 +371,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 			}
 		}
 
-		if err = readpesym(peobj, i, &sym); err != nil {
+		if err = readpesym(ctxt, peobj, i, &sym, localSymVersion); err != nil {
 			goto bad
 		}
 
@@ -385,10 +389,10 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		} else if sym.sectnum > 0 && uint(sym.sectnum) <= peobj.nsect {
 			sect = &peobj.sect[sym.sectnum-1]
 			if sect.sym == nil {
-				Diag("%s: %s sym == 0!", pn, s.Name)
+				Errorf(s, "%s: missing sect.sym", pn)
 			}
 		} else {
-			Diag("%s: %s sectnum < 0!", pn, s.Name)
+			Errorf(s, "%s: sectnum < 0!", pn)
 		}
 
 		if sect == nil {
@@ -396,7 +400,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		}
 
 		if s.Outer != nil {
-			if s.Dupok != 0 {
+			if s.Attr.DuplicateOK() {
 				continue
 			}
 			Exitf("%s: duplicate symbol reference: %s in both %s and %s", pn, s.Name, s.Outer.Name, sect.sym.Name)
@@ -409,10 +413,10 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 		s.Size = 4
 		s.Outer = sect.sym
 		if sect.sym.Type == obj.STEXT {
-			if s.External != 0 && s.Dupok == 0 {
-				Diag("%s: duplicate definition of %s", pn, s.Name)
+			if s.Attr.External() && !s.Attr.DuplicateOK() {
+				Errorf(s, "%s: duplicate symbol definition", pn)
 			}
-			s.External = 1
+			s.Attr |= AttrExternal
 		}
 	}
 
@@ -424,26 +428,20 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 			continue
 		}
 		if s.Sub != nil {
-			s.Sub = listsort(s.Sub, valuecmp, listsubp)
+			s.Sub = listsort(s.Sub)
 		}
 		if s.Type == obj.STEXT {
-			if s.Onlist != 0 {
+			if s.Attr.OnList() {
 				log.Fatalf("symbol %s listed multiple times", s.Name)
 			}
-			s.Onlist = 1
-			if Ctxt.Etextp != nil {
-				Ctxt.Etextp.Next = s
-			} else {
-				Ctxt.Textp = s
-			}
-			Ctxt.Etextp = s
+			s.Attr |= AttrOnList
+			ctxt.Textp = append(ctxt.Textp, s)
 			for s = s.Sub; s != nil; s = s.Sub {
-				if s.Onlist != 0 {
+				if s.Attr.OnList() {
 					log.Fatalf("symbol %s listed multiple times", s.Name)
 				}
-				s.Onlist = 1
-				Ctxt.Etextp.Next = s
-				Ctxt.Etextp = s
+				s.Attr |= AttrOnList
+				ctxt.Textp = append(ctxt.Textp, s)
 			}
 		}
 	}
@@ -451,7 +449,7 @@ func ldpe(f *obj.Biobuf, pkg string, length int64, pn string) {
 	return
 
 bad:
-	Diag("%s: malformed pe file: %v", pn, err)
+	Errorf(nil, "%s: malformed pe file: %v", pn, err)
 }
 
 func pemap(peobj *PeObj, sect *PeSect) int {
@@ -463,7 +461,10 @@ func pemap(peobj *PeObj, sect *PeSect) int {
 	if sect.sh.PointerToRawData == 0 { // .bss doesn't have data in object file
 		return 0
 	}
-	if obj.Bseek(peobj.f, int64(peobj.base)+int64(sect.sh.PointerToRawData), 0) < 0 || obj.Bread(peobj.f, sect.base) != len(sect.base) {
+	if peobj.f.Seek(int64(peobj.base)+int64(sect.sh.PointerToRawData), 0) < 0 {
+		return -1
+	}
+	if _, err := io.ReadFull(peobj.f, sect.base); err != nil {
 		return -1
 	}
 
@@ -474,7 +475,7 @@ func issect(s *PeSym) bool {
 	return s.sclass == IMAGE_SYM_CLASS_STATIC && s.type_ == 0 && s.name[0] == '.'
 }
 
-func readpesym(peobj *PeObj, i int, y **PeSym) (err error) {
+func readpesym(ctxt *Link, peobj *PeObj, i int, y **PeSym, localSymVersion int) (err error) {
 	if uint(i) >= peobj.npesym || i < 0 {
 		err = fmt.Errorf("invalid pe symbol index")
 		return err
@@ -491,7 +492,7 @@ func readpesym(peobj *PeObj, i int, y **PeSym) (err error) {
 		if strings.HasPrefix(name, "__imp_") {
 			name = name[6:] // __imp_Name => Name
 		}
-		if Thearch.Thechar == '8' && name[0] == '_' {
+		if SysArch.Family == sys.I386 && name[0] == '_' {
 			name = name[1:] // _Name => Name
 		}
 	}
@@ -501,7 +502,7 @@ func readpesym(peobj *PeObj, i int, y **PeSym) (err error) {
 		name = name[:i]
 	}
 
-	var s *LSym
+	var s *Symbol
 	switch sym.type_ {
 	default:
 		err = fmt.Errorf("%s: invalid symbol type %d", sym.name, sym.type_)
@@ -510,11 +511,11 @@ func readpesym(peobj *PeObj, i int, y **PeSym) (err error) {
 	case IMAGE_SYM_DTYPE_FUNCTION, IMAGE_SYM_DTYPE_NULL:
 		switch sym.sclass {
 		case IMAGE_SYM_CLASS_EXTERNAL: //global
-			s = Linklookup(Ctxt, name, 0)
+			s = ctxt.Syms.Lookup(name, 0)
 
 		case IMAGE_SYM_CLASS_NULL, IMAGE_SYM_CLASS_STATIC, IMAGE_SYM_CLASS_LABEL:
-			s = Linklookup(Ctxt, name, Ctxt.Version)
-			s.Dupok = 1
+			s = ctxt.Syms.Lookup(name, localSymVersion)
+			s.Attr |= AttrDuplicateOK
 
 		default:
 			err = fmt.Errorf("%s: invalid symbol binding %d", sym.name, sym.sclass)

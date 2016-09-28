@@ -83,35 +83,14 @@ func Contains(b, subslice []byte) bool {
 	return Index(b, subslice) != -1
 }
 
-// Index returns the index of the first instance of sep in s, or -1 if sep is not present in s.
-func Index(s, sep []byte) int {
-	n := len(sep)
-	if n == 0 {
-		return 0
-	}
-	if n > len(s) {
-		return -1
-	}
-	c := sep[0]
-	if n == 1 {
-		return IndexByte(s, c)
-	}
-	i := 0
-	t := s[:len(s)-n+1]
-	for i < len(t) {
-		if t[i] != c {
-			o := IndexByte(t[i:], c)
-			if o < 0 {
-				break
-			}
-			i += o
-		}
-		if Equal(s[i:i+n], sep) {
-			return i
-		}
-		i++
-	}
-	return -1
+// ContainsAny reports whether any of the UTF-8-encoded Unicode code points in chars are within b.
+func ContainsAny(b []byte, chars string) bool {
+	return IndexAny(b, chars) >= 0
+}
+
+// ContainsRune reports whether the Unicode code point r is within b.
+func ContainsRune(b []byte, r rune) bool {
+	return IndexRune(b, r) >= 0
 }
 
 func indexBytePortable(s []byte, c byte) int {
@@ -152,19 +131,17 @@ func LastIndexByte(s []byte, c byte) int {
 // It returns the byte index of the first occurrence in s of the given rune.
 // It returns -1 if rune is not present in s.
 func IndexRune(s []byte, r rune) int {
-	for i := 0; i < len(s); {
-		r1, size := utf8.DecodeRune(s[i:])
-		if r == r1 {
-			return i
-		}
-		i += size
+	if r < utf8.RuneSelf {
+		return IndexByte(s, byte(r))
 	}
-	return -1
+	var b [utf8.UTFMax]byte
+	n := utf8.EncodeRune(b[:], r)
+	return Index(s, b[:n])
 }
 
 // IndexAny interprets s as a sequence of UTF-8-encoded Unicode code points.
 // It returns the byte index of the first occurrence in s of any of the Unicode
-// code points in chars.  It returns -1 if chars is empty or if there is no code
+// code points in chars. It returns -1 if chars is empty or if there is no code
 // point in common.
 func IndexAny(s []byte, chars string) int {
 	if len(chars) > 0 {
@@ -188,8 +165,8 @@ func IndexAny(s []byte, chars string) int {
 }
 
 // LastIndexAny interprets s as a sequence of UTF-8-encoded Unicode code
-// points.  It returns the byte index of the last occurrence in s of any of
-// the Unicode code points in chars.  It returns -1 if chars is empty or if
+// points. It returns the byte index of the last occurrence in s of any of
+// the Unicode code points in chars. It returns -1 if chars is empty or if
 // there is no code point in common.
 func LastIndexAny(s []byte, chars string) int {
 	if len(chars) > 0 {
@@ -276,7 +253,7 @@ func Fields(s []byte) [][]byte {
 
 // FieldsFunc interprets s as a sequence of UTF-8-encoded Unicode code points.
 // It splits the slice s at each run of code points c satisfying f(c) and
-// returns a slice of subslices of s.  If all code points in s satisfy f(c), or
+// returns a slice of subslices of s. If all code points in s satisfy f(c), or
 // len(s) == 0, an empty slice is returned.
 // FieldsFunc makes no guarantees about the order in which it calls f(c).
 // If f does not return consistent results for a given c, FieldsFunc may crash.
@@ -352,12 +329,12 @@ func HasSuffix(s, suffix []byte) bool {
 
 // Map returns a copy of the byte slice s with all its characters modified
 // according to the mapping function. If mapping returns a negative value, the character is
-// dropped from the string with no replacement.  The characters in s and the
+// dropped from the string with no replacement. The characters in s and the
 // output are interpreted as UTF-8-encoded Unicode code points.
 func Map(mapping func(r rune) rune, s []byte) []byte {
 	// In the worst case, the slice can grow when mapped, making
-	// things unpleasant.  But it's so rare we barge in assuming it's
-	// fine.  It could also shrink but that falls out naturally.
+	// things unpleasant. But it's so rare we barge in assuming it's
+	// fine. It could also shrink but that falls out naturally.
 	maxbytes := len(s) // length of b
 	nbytes := 0        // number of bytes encoded in b
 	b := make([]byte, maxbytes)
@@ -697,7 +674,7 @@ func EqualFold(s, t []byte) bool {
 			return false
 		}
 
-		// General case.  SimpleFold(x) returns the next equivalent rune > x
+		// General case. SimpleFold(x) returns the next equivalent rune > x
 		// or wraps around to smaller values.
 		r := unicode.SimpleFold(sr)
 		for r != sr && r < tr {
@@ -709,6 +686,6 @@ func EqualFold(s, t []byte) bool {
 		return false
 	}
 
-	// One string is empty.  Are both?
+	// One string is empty. Are both?
 	return len(s) == len(t)
 }

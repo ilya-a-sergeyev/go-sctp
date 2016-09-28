@@ -1,4 +1,4 @@
-// Copyright 2014 The Go Authors.  All rights reserved.
+// Copyright 2014 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -35,15 +35,6 @@ TEXT ·Expm1(SB),NOSPLIT,$0
 
 TEXT ·Exp(SB),NOSPLIT,$0
 	BR ·exp(SB)
-
-TEXT ·Floor(SB),NOSPLIT,$0
-	BR ·floor(SB)
-
-TEXT ·Ceil(SB),NOSPLIT,$0
-	BR ·ceil(SB)
-
-TEXT ·Trunc(SB),NOSPLIT,$0
-	BR ·trunc(SB)
 
 TEXT ·Frexp(SB),NOSPLIT,$0
 	BR ·frexp(SB)
@@ -83,9 +74,6 @@ TEXT ·Sin(SB),NOSPLIT,$0
 
 TEXT ·Cos(SB),NOSPLIT,$0
 	BR ·cos(SB)
-
-TEXT ·Sqrt(SB),NOSPLIT,$0
-	BR ·sqrt(SB)
 
 TEXT ·Tan(SB),NOSPLIT,$0
 	BR ·tan(SB)

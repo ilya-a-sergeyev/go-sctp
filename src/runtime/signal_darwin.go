@@ -4,8 +4,6 @@
 
 package runtime
 
-import "unsafe"
-
 type sigTabT struct {
 	flags int32
 	name  string
@@ -31,7 +29,7 @@ var sigtable = [...]sigTabT{
 	/* 16 */ {_SigNotify, "SIGURG: urgent condition on socket"},
 	/* 17 */ {0, "SIGSTOP: stop"},
 	/* 18 */ {_SigNotify + _SigDefault, "SIGTSTP: keyboard stop"},
-	/* 19 */ {0, "SIGCONT: continue after stop"},
+	/* 19 */ {_SigNotify + _SigDefault, "SIGCONT: continue after stop"},
 	/* 20 */ {_SigNotify + _SigUnblock, "SIGCHLD: child status has changed"},
 	/* 21 */ {_SigNotify + _SigDefault, "SIGTTIN: background read from tty"},
 	/* 22 */ {_SigNotify + _SigDefault, "SIGTTOU: background write to tty"},
@@ -44,28 +42,4 @@ var sigtable = [...]sigTabT{
 	/* 29 */ {_SigNotify, "SIGINFO: status request from keyboard"},
 	/* 30 */ {_SigNotify, "SIGUSR1: user-defined signal 1"},
 	/* 31 */ {_SigNotify, "SIGUSR2: user-defined signal 2"},
-}
-
-//go:noescape
-func sigfwd(fn uintptr, sig uint32, info *siginfo, ctx unsafe.Pointer)
-
-//go:noescape
-func sigreturn(ctx unsafe.Pointer, infostyle uint32)
-
-//go:nosplit
-func sigtrampgo(fn uintptr, infostyle, sig uint32, info *siginfo, ctx unsafe.Pointer) {
-	if sigfwdgo(sig, info, ctx) {
-		sigreturn(ctx, infostyle)
-		return
-	}
-	g := getg()
-	if g == nil {
-		badsignal(uintptr(sig))
-		sigreturn(ctx, infostyle)
-		return
-	}
-	setg(g.m.gsignal)
-	sighandler(sig, info, ctx, g)
-	setg(g)
-	sigreturn(ctx, infostyle)
 }

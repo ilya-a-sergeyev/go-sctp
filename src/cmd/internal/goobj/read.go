@@ -1,4 +1,4 @@
-// Copyright 2013 The Go Authors.  All rights reserved.
+// Copyright 2013 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -29,49 +29,48 @@ type SymKind int
 // TODO(rsc): Give idiomatic Go names.
 // TODO(rsc): Reduce the number of symbol types in the object files.
 const (
-	_ SymKind = iota
-
 	// readonly, executable
-	STEXT      SymKind = obj.STEXT
-	SELFRXSECT SymKind = obj.SELFRXSECT
+	STEXT      = SymKind(obj.STEXT)
+	SELFRXSECT = SymKind(obj.SELFRXSECT)
 
 	// readonly, non-executable
-	STYPE      SymKind = obj.STYPE
-	SSTRING    SymKind = obj.SSTRING
-	SGOSTRING  SymKind = obj.SGOSTRING
-	SGOFUNC    SymKind = obj.SGOFUNC
-	SRODATA    SymKind = obj.SRODATA
-	SFUNCTAB   SymKind = obj.SFUNCTAB
-	STYPELINK  SymKind = obj.STYPELINK
-	SSYMTAB    SymKind = obj.SSYMTAB // TODO: move to unmapped section
-	SPCLNTAB   SymKind = obj.SPCLNTAB
-	SELFROSECT SymKind = obj.SELFROSECT
+	STYPE      = SymKind(obj.STYPE)
+	SSTRING    = SymKind(obj.SSTRING)
+	SGOSTRING  = SymKind(obj.SGOSTRING)
+	SGOFUNC    = SymKind(obj.SGOFUNC)
+	SRODATA    = SymKind(obj.SRODATA)
+	SFUNCTAB   = SymKind(obj.SFUNCTAB)
+	STYPELINK  = SymKind(obj.STYPELINK)
+	SITABLINK  = SymKind(obj.SITABLINK)
+	SSYMTAB    = SymKind(obj.SSYMTAB) // TODO: move to unmapped section
+	SPCLNTAB   = SymKind(obj.SPCLNTAB)
+	SELFROSECT = SymKind(obj.SELFROSECT)
 
 	// writable, non-executable
-	SMACHOPLT  SymKind = obj.SMACHOPLT
-	SELFSECT   SymKind = obj.SELFSECT
-	SMACHO     SymKind = obj.SMACHO // Mach-O __nl_symbol_ptr
-	SMACHOGOT  SymKind = obj.SMACHOGOT
-	SWINDOWS   SymKind = obj.SWINDOWS
-	SELFGOT    SymKind = obj.SELFGOT
-	SNOPTRDATA SymKind = obj.SNOPTRDATA
-	SINITARR   SymKind = obj.SINITARR
-	SDATA      SymKind = obj.SDATA
-	SBSS       SymKind = obj.SBSS
-	SNOPTRBSS  SymKind = obj.SNOPTRBSS
-	STLSBSS    SymKind = obj.STLSBSS
+	SMACHOPLT  = SymKind(obj.SMACHOPLT)
+	SELFSECT   = SymKind(obj.SELFSECT)
+	SMACHO     = SymKind(obj.SMACHO) // Mach-O __nl_symbol_ptr
+	SMACHOGOT  = SymKind(obj.SMACHOGOT)
+	SWINDOWS   = SymKind(obj.SWINDOWS)
+	SELFGOT    = SymKind(obj.SELFGOT)
+	SNOPTRDATA = SymKind(obj.SNOPTRDATA)
+	SINITARR   = SymKind(obj.SINITARR)
+	SDATA      = SymKind(obj.SDATA)
+	SBSS       = SymKind(obj.SBSS)
+	SNOPTRBSS  = SymKind(obj.SNOPTRBSS)
+	STLSBSS    = SymKind(obj.STLSBSS)
 
 	// not mapped
-	SXREF             SymKind = obj.SXREF
-	SMACHOSYMSTR      SymKind = obj.SMACHOSYMSTR
-	SMACHOSYMTAB      SymKind = obj.SMACHOSYMTAB
-	SMACHOINDIRECTPLT SymKind = obj.SMACHOINDIRECTPLT
-	SMACHOINDIRECTGOT SymKind = obj.SMACHOINDIRECTGOT
-	SFILE             SymKind = obj.SFILE
-	SFILEPATH         SymKind = obj.SFILEPATH
-	SCONST            SymKind = obj.SCONST
-	SDYNIMPORT        SymKind = obj.SDYNIMPORT
-	SHOSTOBJ          SymKind = obj.SHOSTOBJ
+	SXREF             = SymKind(obj.SXREF)
+	SMACHOSYMSTR      = SymKind(obj.SMACHOSYMSTR)
+	SMACHOSYMTAB      = SymKind(obj.SMACHOSYMTAB)
+	SMACHOINDIRECTPLT = SymKind(obj.SMACHOINDIRECTPLT)
+	SMACHOINDIRECTGOT = SymKind(obj.SMACHOINDIRECTGOT)
+	SFILE             = SymKind(obj.SFILE)
+	SFILEPATH         = SymKind(obj.SFILEPATH)
+	SCONST            = SymKind(obj.SCONST)
+	SDYNIMPORT        = SymKind(obj.SDYNIMPORT)
+	SHOSTOBJ          = SymKind(obj.SHOSTOBJ)
 )
 
 var symKindStrings = []string{
@@ -106,6 +105,7 @@ var symKindStrings = []string{
 	STLSBSS:           "STLSBSS",
 	STYPE:             "STYPE",
 	STYPELINK:         "STYPELINK",
+	SITABLINK:         "SITABLINK",
 	SWINDOWS:          "SWINDOWS",
 	SXREF:             "SXREF",
 }
@@ -161,7 +161,7 @@ type Data struct {
 // A Reloc describes a relocation applied to a memory image to refer
 // to an address within a particular symbol.
 type Reloc struct {
-	// The bytes at [Offset, Offset+Size) within the memory image
+	// The bytes at [Offset, Offset+Size) within the containing Sym
 	// should be updated to refer to the address Add bytes after the start
 	// of the symbol Sym.
 	Offset int
@@ -172,7 +172,7 @@ type Reloc struct {
 	// The Type records the form of address expected in the bytes
 	// described by the previous fields: absolute, PC-relative, and so on.
 	// TODO(rsc): The interpretation of Type is not exposed by this package.
-	Type int
+	Type obj.RelocType
 }
 
 // A Var describes a variable in a function stack frame: a declared
@@ -215,8 +215,10 @@ type FuncData struct {
 type Package struct {
 	ImportPath string   // import path denoting this package
 	Imports    []string // packages imported by this package
+	SymRefs    []SymID  // list of symbol names and versions referred to by this pack
 	Syms       []*Sym   // symbols defined by this package
 	MaxVersion int      // maximum Version in any SymID in Syms
+	Arch       string   // architecture
 }
 
 var (
@@ -226,24 +228,21 @@ var (
 
 	errCorruptArchive   = errors.New("corrupt archive")
 	errTruncatedArchive = errors.New("truncated archive")
-	errNotArchive       = errors.New("unrecognized archive format")
-
-	errCorruptObject   = errors.New("corrupt object file")
-	errTruncatedObject = errors.New("truncated object file")
-	errNotObject       = errors.New("unrecognized object file format")
+	errCorruptObject    = errors.New("corrupt object file")
+	errNotObject        = errors.New("unrecognized object file format")
 )
 
 // An objReader is an object file reader.
 type objReader struct {
-	p         *Package
-	b         *bufio.Reader
-	f         io.ReadSeeker
-	err       error
-	offset    int64
-	limit     int64
-	tmp       [256]byte
-	pkg       string
-	pkgprefix string
+	p          *Package
+	b          *bufio.Reader
+	f          io.ReadSeeker
+	err        error
+	offset     int64
+	dataOffset int64
+	limit      int64
+	tmp        [256]byte
+	pkgprefix  string
 }
 
 // importPathToPrefix returns the prefix that will be used in the
@@ -289,9 +288,9 @@ func importPathToPrefix(s string) string {
 func (r *objReader) init(f io.ReadSeeker, p *Package) {
 	r.f = f
 	r.p = p
-	r.offset, _ = f.Seek(0, 1)
-	r.limit, _ = f.Seek(0, 2)
-	f.Seek(r.offset, 0)
+	r.offset, _ = f.Seek(0, io.SeekCurrent)
+	r.limit, _ = f.Seek(0, io.SeekEnd)
+	f.Seek(r.offset, io.SeekStart)
 	r.b = bufio.NewReader(f)
 	r.pkgprefix = importPathToPrefix(p.ImportPath) + "."
 }
@@ -390,6 +389,11 @@ func (r *objReader) readString() string {
 
 // readSymID reads a SymID from the input file.
 func (r *objReader) readSymID() SymID {
+	i := r.readInt()
+	return r.p.SymRefs[i]
+}
+
+func (r *objReader) readRef() {
 	name, vers := r.readString(), r.readInt()
 
 	// In a symbol name in an object file, "". denotes the
@@ -404,15 +408,14 @@ func (r *objReader) readSymID() SymID {
 	if vers != 0 {
 		vers = r.p.MaxVersion
 	}
-
-	return SymID{name, vers}
+	r.p.SymRefs = append(r.p.SymRefs, SymID{name, vers})
 }
 
 // readData reads a data reference from the input file.
 func (r *objReader) readData() Data {
 	n := r.readInt()
-	d := Data{Offset: r.offset, Size: int64(n)}
-	r.skip(int64(n))
+	d := Data{Offset: r.dataOffset, Size: int64(n)}
+	r.dataOffset += int64(n)
 	return d
 }
 
@@ -435,7 +438,7 @@ func (r *objReader) skip(n int64) {
 		r.readFull(r.tmp[:n])
 	} else {
 		// Seek, giving up buffered data.
-		_, err := r.f.Seek(r.offset+n, 0)
+		_, err := r.f.Seek(r.offset+n, io.SeekStart)
 		if err != nil {
 			r.error(err)
 		}
@@ -530,7 +533,7 @@ func (r *objReader) parseArchive() error {
 			return errCorruptArchive
 		}
 		switch name {
-		case "__.SYMDEF", "__.GOSYMDEF", "__.PKGDEF":
+		case "__.PKGDEF":
 			r.skip(size)
 		default:
 			oldLimit := r.limit
@@ -556,15 +559,16 @@ func (r *objReader) parseArchive() error {
 // The format of that part is defined in a comment at the top
 // of src/liblink/objfile.c.
 func (r *objReader) parseObject(prefix []byte) error {
-	// TODO(rsc): Maybe use prefix and the initial input to
-	// record the header line from the file, which would
-	// give the architecture and other version information.
-
 	r.p.MaxVersion++
+	h := make([]byte, 0, 256)
+	h = append(h, prefix...)
 	var c1, c2, c3 byte
 	for {
 		c1, c2, c3 = c2, c3, r.readByte()
-		if c3 == 0 { // NUL or EOF, either is bad
+		h = append(h, c3)
+		// The new export format can contain 0 bytes.
+		// Don't consider them errors, only look for r.err != nil.
+		if r.err != nil {
 			return errCorruptObject
 		}
 		if c1 == '\n' && c2 == '!' && c3 == '\n' {
@@ -572,8 +576,14 @@ func (r *objReader) parseObject(prefix []byte) error {
 		}
 	}
 
+	hs := strings.Fields(string(h))
+	if len(hs) >= 4 {
+		r.p.Arch = hs[3]
+	}
+	// TODO: extract OS + build ID if/when we need it
+
 	r.readFull(r.tmp[:8])
-	if !bytes.Equal(r.tmp[:8], []byte("\x00\x00go13ld")) {
+	if !bytes.Equal(r.tmp[:8], []byte("\x00\x00go17ld")) {
 		return r.error(errCorruptObject)
 	}
 
@@ -590,6 +600,28 @@ func (r *objReader) parseObject(prefix []byte) error {
 		}
 		r.p.Imports = append(r.p.Imports, s)
 	}
+
+	r.p.SymRefs = []SymID{{"", 0}}
+	for {
+		if b := r.readByte(); b != 0xfe {
+			if b != 0xff {
+				return r.error(errCorruptObject)
+			}
+			break
+		}
+
+		r.readRef()
+	}
+
+	dataLength := r.readInt()
+	r.readInt() // n relocations - ignore
+	r.readInt() // n pcdata - ignore
+	r.readInt() // n autom - ignore
+	r.readInt() // n funcdata - ignore
+	r.readInt() // n files - ignore
+
+	r.dataOffset = r.offset
+	r.skip(int64(dataLength))
 
 	// Symbols.
 	for {
@@ -614,11 +646,9 @@ func (r *objReader) parseObject(prefix []byte) error {
 			rel := &s.Reloc[i]
 			rel.Offset = r.readInt()
 			rel.Size = r.readInt()
-			rel.Type = r.readInt()
+			rel.Type = obj.RelocType(r.readInt())
 			rel.Add = r.readInt()
-			r.readInt() // Xadd - ignored
 			rel.Sym = r.readSymID()
-			r.readSymID() // Xsym - ignored
 		}
 
 		if s.Kind == STEXT {
@@ -660,9 +690,24 @@ func (r *objReader) parseObject(prefix []byte) error {
 	}
 
 	r.readFull(r.tmp[:7])
-	if !bytes.Equal(r.tmp[:7], []byte("\xffgo13ld")) {
+	if !bytes.Equal(r.tmp[:7], []byte("\xffgo17ld")) {
 		return r.error(errCorruptObject)
 	}
 
 	return nil
+}
+
+func (r *Reloc) String(insnOffset uint64) string {
+	delta := r.Offset - int(insnOffset)
+	s := fmt.Sprintf("[%d:%d]%s", delta, delta+r.Size, r.Type)
+	if r.Sym.Name != "" {
+		if r.Add != 0 {
+			return fmt.Sprintf("%s:%s+%d", s, r.Sym.Name, r.Add)
+		}
+		return fmt.Sprintf("%s:%s", s, r.Sym.Name)
+	}
+	if r.Add != 0 {
+		return fmt.Sprintf("%s:%d", s, r.Add)
+	}
+	return s
 }

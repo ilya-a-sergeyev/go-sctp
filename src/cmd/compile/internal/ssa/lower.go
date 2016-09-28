@@ -21,10 +21,19 @@ func checkLower(f *Func) {
 				continue // lowered
 			}
 			switch v.Op {
-			case OpSP, OpSB, OpArg, OpCopy, OpPhi:
+			case OpSP, OpSB, OpInitMem, OpArg, OpPhi, OpVarDef, OpVarKill, OpVarLive, OpKeepAlive, OpSelect0, OpSelect1:
 				continue // ok not to lower
+			case OpGetG:
+				if f.Config.hasGReg {
+					// has hardware g register, regalloc takes care of it
+					continue // ok not to lower
+				}
 			}
-			f.Unimplementedf("%s not lowered", v.LongString())
+			s := "not lowered: " + v.String() + ", " + v.Op.String() + " " + v.Type.SimpleString()
+			for _, a := range v.Args {
+				s += " " + a.Type.SimpleString()
+			}
+			f.Fatalf("%s", s)
 		}
 	}
 }

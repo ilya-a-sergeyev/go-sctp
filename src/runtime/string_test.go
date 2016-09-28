@@ -10,6 +10,10 @@ import (
 	"testing"
 )
 
+// Strings and slices that don't escape and fit into tmpBuf are stack allocated,
+// which defeats using AllocsPerRun to test other optimizations.
+const sizeNoStack = 100
+
 func BenchmarkCompareStringEqual(b *testing.B) {
 	bytes := []byte("Hello Gophers!")
 	s1, s2 := string(bytes), string(bytes)
@@ -78,26 +82,58 @@ func BenchmarkCompareStringBig(b *testing.B) {
 	b.SetBytes(int64(len(s1)))
 }
 
-func BenchmarkRuneIterate(b *testing.B) {
-	bytes := make([]byte, 100)
-	for i := range bytes {
-		bytes[i] = byte('A')
-	}
-	s := string(bytes)
+func BenchmarkConcatStringAndBytes(b *testing.B) {
+	s1 := []byte("Gophers!")
 	for i := 0; i < b.N; i++ {
-		for range s {
-		}
+		_ = "Hello " + string(s1)
 	}
 }
 
-func BenchmarkRuneIterate2(b *testing.B) {
-	bytes := make([]byte, 100)
-	for i := range bytes {
-		bytes[i] = byte('A')
-	}
-	s := string(bytes)
+var stringdata = []struct{ name, data string }{
+	{"ASCII", "01234567890"},
+	{"Japanese", "日本語日本語日本語"},
+}
+
+func BenchmarkRuneIterate(b *testing.B) {
+	b.Run("range", func(b *testing.B) {
+		for _, sd := range stringdata {
+			b.Run(sd.name, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					for range sd.data {
+					}
+				}
+			})
+		}
+	})
+	b.Run("range1", func(b *testing.B) {
+		for _, sd := range stringdata {
+			b.Run(sd.name, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					for _ = range sd.data {
+					}
+				}
+			})
+		}
+	})
+	b.Run("range2", func(b *testing.B) {
+		for _, sd := range stringdata {
+			b.Run(sd.name, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					for _, _ = range sd.data {
+					}
+				}
+			})
+		}
+	})
+}
+
+func BenchmarkArrayEqual(b *testing.B) {
+	a1 := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	a2 := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for range s {
+		if a1 != a2 {
+			b.Fatal("not equal")
 		}
 	}
 }
@@ -125,7 +161,7 @@ func TestStringW(t *testing.T) {
 }
 
 func TestLargeStringConcat(t *testing.T) {
-	output := executeTest(t, largeStringConcatSource, nil)
+	output := runTestProg(t, "testprog", "stringconcat")
 	want := "panic: " + strings.Repeat("0", 1<<10) + strings.Repeat("1", 1<<10) +
 		strings.Repeat("2", 1<<10) + strings.Repeat("3", 1<<10)
 	if !strings.HasPrefix(output, want) {
@@ -133,34 +169,8 @@ func TestLargeStringConcat(t *testing.T) {
 	}
 }
 
-var largeStringConcatSource = `
-package main
-import "strings"
-func main() {
-	s0 := strings.Repeat("0", 1<<10)
-	s1 := strings.Repeat("1", 1<<10)
-	s2 := strings.Repeat("2", 1<<10)
-	s3 := strings.Repeat("3", 1<<10)
-	s := s0 + s1 + s2 + s3
-	panic(s)
-}
-`
-
-func TestGostringnocopy(t *testing.T) {
-	max := *runtime.Maxstring
-	b := make([]byte, max+10)
-	for i := uintptr(0); i < max+9; i++ {
-		b[i] = 'a'
-	}
-	_ = runtime.Gostringnocopy(&b[0])
-	newmax := *runtime.Maxstring
-	if newmax != max+9 {
-		t.Errorf("want %d, got %d", max+9, newmax)
-	}
-}
-
 func TestCompareTempString(t *testing.T) {
-	s := "foo"
+	s := strings.Repeat("x", sizeNoStack)
 	b := []byte(s)
 	n := testing.AllocsPerRun(1000, func() {
 		if string(b) != s {
@@ -223,7 +233,7 @@ func TestIntStringAllocs(t *testing.T) {
 }
 
 func TestRangeStringCast(t *testing.T) {
-	s := "abc"
+	s := strings.Repeat("x", sizeNoStack)
 	n := testing.AllocsPerRun(1000, func() {
 		for i, c := range []byte(s) {
 			if c != s[i] {
@@ -233,5 +243,38 @@ func TestRangeStringCast(t *testing.T) {
 	})
 	if n != 0 {
 		t.Fatalf("want 0 allocs, got %v", n)
+	}
+}
+
+func isZeroed(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func isZeroedR(r []rune) bool {
+	for _, x := range r {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func TestString2Slice(t *testing.T) {
+	// Make sure we don't return slices that expose
+	// an unzeroed section of stack-allocated temp buf
+	// between len and cap. See issue 14232.
+	s := "foož"
+	b := ([]byte)(s)
+	if !isZeroed(b[len(b):cap(b)]) {
+		t.Errorf("extra bytes not zeroed")
+	}
+	r := ([]rune)(s)
+	if !isZeroedR(r[len(r):cap(r)]) {
+		t.Errorf("extra runes not zeroed")
 	}
 }

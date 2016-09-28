@@ -13,7 +13,7 @@
 // and chopped up when new objects of the size class are needed.
 // That page count is chosen so that chopping up the run of
 // pages into objects of the given size wastes at most 12.5% (1.125x)
-// of the memory.  It is not necessary that the cutoff here be
+// of the memory. It is not necessary that the cutoff here be
 // the same as above.
 //
 // The two sources of waste multiply, so the worst possible case
@@ -27,7 +27,7 @@
 
 package runtime
 
-// Size classes.  Computed and initialized by InitSizes.
+// Size classes. Computed and initialized by InitSizes.
 //
 // SizeToClass(0 <= n <= MaxSmallSize) returns the size class,
 //	1 <= sizeclass < NumSizeClasses, for n.
@@ -46,21 +46,27 @@ package runtime
 // size divided by 128 (rounded up).  The arrays are filled in
 // by InitSizes.
 
-var class_to_size [_NumSizeClasses]int32
-var class_to_allocnpages [_NumSizeClasses]int32
+const (
+	smallSizeDiv = 8
+	smallSizeMax = 1024
+	largeSizeDiv = 128
+)
+
+var class_to_size [_NumSizeClasses]uint32
+var class_to_allocnpages [_NumSizeClasses]uint32
 var class_to_divmagic [_NumSizeClasses]divMagic
 
-var size_to_class8 [1024/8 + 1]int8
-var size_to_class128 [(_MaxSmallSize-1024)/128 + 1]int8
+var size_to_class8 [smallSizeMax/smallSizeDiv + 1]uint8
+var size_to_class128 [(_MaxSmallSize-smallSizeMax)/largeSizeDiv + 1]uint8
 
-func sizeToClass(size int32) int32 {
+func sizeToClass(size uint32) uint32 {
 	if size > _MaxSmallSize {
-		throw("SizeToClass - invalid size")
+		throw("invalid size")
 	}
-	if size > 1024-8 {
-		return int32(size_to_class128[(size-1024+127)>>7])
+	if size > smallSizeMax-8 {
+		return uint32(size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv])
 	}
-	return int32(size_to_class8[(size+7)>>3])
+	return uint32(size_to_class8[(size+smallSizeDiv-1)/smallSizeDiv])
 }
 
 func initSizes() {
@@ -79,7 +85,7 @@ func initSizes() {
 			}
 		}
 		if align&(align-1) != 0 {
-			throw("InitSizes - bug")
+			throw("incorrect alignment")
 		}
 
 		// Make the allocnpages big enough that
@@ -97,43 +103,72 @@ func initSizes() {
 		// use just this size instead of having two
 		// different sizes.
 		if sizeclass > 1 && npages == int(class_to_allocnpages[sizeclass-1]) && allocsize/size == allocsize/int(class_to_size[sizeclass-1]) {
-			class_to_size[sizeclass-1] = int32(size)
+			class_to_size[sizeclass-1] = uint32(size)
 			continue
 		}
 
-		class_to_allocnpages[sizeclass] = int32(npages)
-		class_to_size[sizeclass] = int32(size)
+		class_to_allocnpages[sizeclass] = uint32(npages)
+		class_to_size[sizeclass] = uint32(size)
 		sizeclass++
 	}
 	if sizeclass != _NumSizeClasses {
-		print("sizeclass=", sizeclass, " NumSizeClasses=", _NumSizeClasses, "\n")
-		throw("InitSizes - bad NumSizeClasses")
+		print("runtime: sizeclass=", sizeclass, " NumSizeClasses=", _NumSizeClasses, "\n")
+		throw("bad NumSizeClasses")
 	}
 
+	// Increase object sizes if we can fit the same number of larger objects
+	// into the same number of pages. For example, we choose size 8448 above
+	// with 6 objects in 7 pages. But we can well use object size 9472,
+	// which is also 6 objects in 7 pages but +1024 bytes (+12.12%).
+	// We need to preserve at least largeSizeDiv alignment otherwise
+	// sizeToClass won't work.
+	for i := 1; i < _NumSizeClasses; i++ {
+		npages := class_to_allocnpages[i]
+		psize := npages * _PageSize
+		size := class_to_size[i]
+		new_size := (psize / (psize / size)) &^ (largeSizeDiv - 1)
+		if new_size > size {
+			class_to_size[i] = new_size
+		}
+	}
+
+	// Check maxObjsPerSpan => number of objects invariant.
+	for i, size := range class_to_size {
+		if i != 0 && class_to_size[i-1] >= size {
+			throw("non-monotonic size classes")
+		}
+
+		if size != 0 && class_to_allocnpages[i]*pageSize/size > maxObjsPerSpan {
+			throw("span contains too many objects")
+		}
+		if size == 0 && i != 0 {
+			throw("size is 0 but class is not 0")
+		}
+	}
 	// Initialize the size_to_class tables.
 	nextsize := 0
 	for sizeclass = 1; sizeclass < _NumSizeClasses; sizeclass++ {
 		for ; nextsize < 1024 && nextsize <= int(class_to_size[sizeclass]); nextsize += 8 {
-			size_to_class8[nextsize/8] = int8(sizeclass)
+			size_to_class8[nextsize/8] = uint8(sizeclass)
 		}
 		if nextsize >= 1024 {
 			for ; nextsize <= int(class_to_size[sizeclass]); nextsize += 128 {
-				size_to_class128[(nextsize-1024)/128] = int8(sizeclass)
+				size_to_class128[(nextsize-1024)/128] = uint8(sizeclass)
 			}
 		}
 	}
 
 	// Double-check SizeToClass.
 	if false {
-		for n := int32(0); n < _MaxSmallSize; n++ {
+		for n := uint32(0); n < _MaxSmallSize; n++ {
 			sizeclass := sizeToClass(n)
 			if sizeclass < 1 || sizeclass >= _NumSizeClasses || class_to_size[sizeclass] < n {
-				print("size=", n, " sizeclass=", sizeclass, " runtime·class_to_size=", class_to_size[sizeclass], "\n")
+				print("runtime: size=", n, " sizeclass=", sizeclass, " runtime·class_to_size=", class_to_size[sizeclass], "\n")
 				print("incorrect SizeToClass\n")
 				goto dump
 			}
 			if sizeclass > 1 && class_to_size[sizeclass-1] >= n {
-				print("size=", n, " sizeclass=", sizeclass, " runtime·class_to_size=", class_to_size[sizeclass], "\n")
+				print("runtime: size=", n, " sizeclass=", sizeclass, " runtime·class_to_size=", class_to_size[sizeclass], "\n")
 				print("SizeToClass too big\n")
 				goto dump
 			}
@@ -155,18 +190,18 @@ func initSizes() {
 
 dump:
 	if true {
-		print("NumSizeClasses=", _NumSizeClasses, "\n")
+		print("runtime: NumSizeClasses=", _NumSizeClasses, "\n")
 		print("runtime·class_to_size:")
 		for sizeclass = 0; sizeclass < _NumSizeClasses; sizeclass++ {
 			print(" ", class_to_size[sizeclass], "")
 		}
 		print("\n\n")
-		print("size_to_class8:")
+		print("runtime: size_to_class8:")
 		for i := 0; i < len(size_to_class8); i++ {
 			print(" ", i*8, "=>", size_to_class8[i], "(", class_to_size[size_to_class8[i]], ")\n")
 		}
 		print("\n")
-		print("size_to_class128:")
+		print("runtime: size_to_class128:")
 		for i := 0; i < len(size_to_class128); i++ {
 			print(" ", i*128, "=>", size_to_class128[i], "(", class_to_size[size_to_class128[i]], ")\n")
 		}
@@ -178,10 +213,10 @@ dump:
 // Returns size of the memory block that mallocgc will allocate if you ask for the size.
 func roundupsize(size uintptr) uintptr {
 	if size < _MaxSmallSize {
-		if size <= 1024-8 {
-			return uintptr(class_to_size[size_to_class8[(size+7)>>3]])
+		if size <= smallSizeMax-8 {
+			return uintptr(class_to_size[size_to_class8[(size+smallSizeDiv-1)/smallSizeDiv]])
 		} else {
-			return uintptr(class_to_size[size_to_class128[(size-1024+127)>>7]])
+			return uintptr(class_to_size[size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]])
 		}
 	}
 	if size+_PageSize < size {

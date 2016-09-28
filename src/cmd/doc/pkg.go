@@ -16,6 +16,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -27,23 +29,66 @@ const (
 )
 
 type Package struct {
-	writer     io.Writer // Destination for output.
-	name       string    // Package name, json for encoding/json.
-	userPath   string    // String the user used to find this package.
-	unexported bool
-	matchCase  bool
-	pkg        *ast.Package // Parsed package.
-	file       *ast.File    // Merged from all files in the package
-	doc        *doc.Package
-	build      *build.Package
-	fs         *token.FileSet // Needed for printing.
-	buf        bytes.Buffer
+	writer   io.Writer    // Destination for output.
+	name     string       // Package name, json for encoding/json.
+	userPath string       // String the user used to find this package.
+	pkg      *ast.Package // Parsed package.
+	file     *ast.File    // Merged from all files in the package
+	doc      *doc.Package
+	build    *build.Package
+	fs       *token.FileSet // Needed for printing.
+	buf      bytes.Buffer
 }
 
 type PackageError string // type returned by pkg.Fatalf.
 
 func (p PackageError) Error() string {
 	return string(p)
+}
+
+// prettyPath returns a version of the package path that is suitable for an
+// error message. It obeys the import comment if present. Also, since
+// pkg.build.ImportPath is sometimes the unhelpful "" or ".", it looks for a
+// directory name in GOROOT or GOPATH if that happens.
+func (pkg *Package) prettyPath() string {
+	path := pkg.build.ImportComment
+	if path == "" {
+		path = pkg.build.ImportPath
+	}
+	if path != "." && path != "" {
+		return path
+	}
+	// Convert the source directory into a more useful path.
+	// Also convert everything to slash-separated paths for uniform handling.
+	path = filepath.Clean(filepath.ToSlash(pkg.build.Dir))
+	// Can we find a decent prefix?
+	goroot := filepath.Join(build.Default.GOROOT, "src")
+	if p, ok := trim(path, filepath.ToSlash(goroot)); ok {
+		return p
+	}
+	for _, gopath := range splitGopath() {
+		if p, ok := trim(path, filepath.ToSlash(gopath)); ok {
+			return p
+		}
+	}
+	return path
+}
+
+// trim trims the directory prefix from the path, paying attention
+// to the path separator. If they are the same string or the prefix
+// is not present the original is returned. The boolean reports whether
+// the prefix is present. That path and prefix have slashes for separators.
+func trim(path, prefix string) (string, bool) {
+	if !strings.HasPrefix(path, prefix) {
+		return path, false
+	}
+	if path == prefix {
+		return path, true
+	}
+	if path[len(prefix)] == '/' {
+		return path[len(prefix)+1:], true
+	}
+	return path, false // Textual prefix but not a path prefix.
 }
 
 // pkg.Fatalf is like log.Fatalf, but panics so it can be recovered in the
@@ -140,10 +185,12 @@ func (pkg *Package) emit(comment string, node ast.Node) {
 			log.Fatal(err)
 		}
 		if comment != "" {
-			pkg.newlines(2) // Guarantee blank line before comment.
+			pkg.newlines(1)
 			doc.ToText(&pkg.buf, comment, "    ", indent, indentedWidth)
+			pkg.newlines(2) // Blank line after comment to separate from next item.
+		} else {
+			pkg.newlines(1)
 		}
-		pkg.newlines(1)
 	}
 }
 
@@ -218,10 +265,10 @@ func (pkg *Package) packageDoc() {
 		return
 	}
 
-	pkg.newlines(1)
+	pkg.newlines(2) // Guarantee blank line before the components.
 	pkg.valueSummary(pkg.doc.Consts)
 	pkg.valueSummary(pkg.doc.Vars)
-	pkg.funcSummary(pkg.doc.Funcs)
+	pkg.funcSummary(pkg.doc.Funcs, false)
 	pkg.typeSummary()
 	pkg.bugs()
 }
@@ -257,39 +304,50 @@ func (pkg *Package) packageClause(checkUserPath bool) {
 // valueSummary prints a one-line summary for each set of values and constants.
 func (pkg *Package) valueSummary(values []*doc.Value) {
 	for _, value := range values {
-		// Only print first item in spec, show ... to stand for the rest.
-		spec := value.Decl.Specs[0].(*ast.ValueSpec) // Must succeed.
-		exported := true
-		for _, name := range spec.Names {
-			if !isExported(name.Name) {
-				exported = false
-				break
-			}
-		}
-		if exported {
-			pkg.oneLineValueGenDecl(value.Decl)
-		}
+		pkg.oneLineValueGenDecl(value.Decl)
 	}
 }
 
-// funcSummary prints a one-line summary for each function.
-func (pkg *Package) funcSummary(funcs []*doc.Func) {
+// funcSummary prints a one-line summary for each function. Constructors
+// are printed by typeSummary, below, and so can be suppressed here.
+func (pkg *Package) funcSummary(funcs []*doc.Func, showConstructors bool) {
+	// First, identify the constructors. Don't bother figuring out if they're exported.
+	var isConstructor map[*doc.Func]bool
+	if !showConstructors {
+		isConstructor = make(map[*doc.Func]bool)
+		for _, typ := range pkg.doc.Types {
+			for _, constructor := range typ.Funcs {
+				if isExported(typ.Name) {
+					isConstructor[constructor] = true
+				}
+			}
+		}
+	}
 	for _, fun := range funcs {
 		decl := fun.Decl
 		// Exported functions only. The go/doc package does not include methods here.
 		if isExported(fun.Name) {
-			pkg.oneLineFunc(decl)
+			if !isConstructor[fun] {
+				pkg.oneLineFunc(decl)
+			}
 		}
 	}
 }
 
-// typeSummary prints a one-line summary for each type.
+// typeSummary prints a one-line summary for each type, followed by its constructors.
 func (pkg *Package) typeSummary() {
 	for _, typ := range pkg.doc.Types {
 		for _, spec := range typ.Decl.Specs {
 			typeSpec := spec.(*ast.TypeSpec) // Must succeed.
 			if isExported(typeSpec.Name.Name) {
 				pkg.oneLineTypeDecl(typeSpec)
+				// Now print the constructors.
+				for _, constructor := range typ.Funcs {
+					if isExported(constructor.Name) {
+						pkg.Printf(indent)
+						pkg.oneLineFunc(constructor.Decl)
+					}
+				}
 			}
 		}
 	}
@@ -355,7 +413,7 @@ func (pkg *Package) findTypeSpec(decl *ast.GenDecl, symbol string) *ast.TypeSpec
 // symbolDoc prints the docs for symbol. There may be multiple matches.
 // If symbol matches a type, output includes its methods factories and associated constants.
 // If there is no top-level symbol, symbolDoc looks for methods that match.
-func (pkg *Package) symbolDoc(symbol string) {
+func (pkg *Package) symbolDoc(symbol string) bool {
 	defer pkg.flush()
 	found := false
 	// Functions.
@@ -417,16 +475,17 @@ func (pkg *Package) symbolDoc(symbol string) {
 		}
 		pkg.valueSummary(typ.Consts)
 		pkg.valueSummary(typ.Vars)
-		pkg.funcSummary(typ.Funcs)
-		pkg.funcSummary(typ.Methods)
+		pkg.funcSummary(typ.Funcs, true)
+		pkg.funcSummary(typ.Methods, true)
 		found = true
 	}
 	if !found {
 		// See if there are methods.
 		if !pkg.printMethodDoc("", symbol) {
-			log.Printf("symbol %s not present in package %s installed in %q", symbol, pkg.name, pkg.build.ImportPath)
+			return false
 		}
 	}
+	return true
 }
 
 // trimUnexportedElems modifies spec in place to elide unexported fields from
@@ -437,20 +496,54 @@ func trimUnexportedElems(spec *ast.TypeSpec) {
 	}
 	switch typ := spec.Type.(type) {
 	case *ast.StructType:
-		typ.Fields = trimUnexportedFields(typ.Fields, "fields")
+		typ.Fields = trimUnexportedFields(typ.Fields, false)
 	case *ast.InterfaceType:
-		typ.Methods = trimUnexportedFields(typ.Methods, "methods")
+		typ.Methods = trimUnexportedFields(typ.Methods, true)
 	}
 }
 
 // trimUnexportedFields returns the field list trimmed of unexported fields.
-func trimUnexportedFields(fields *ast.FieldList, what string) *ast.FieldList {
+func trimUnexportedFields(fields *ast.FieldList, isInterface bool) *ast.FieldList {
+	what := "methods"
+	if !isInterface {
+		what = "fields"
+	}
+
 	trimmed := false
 	list := make([]*ast.Field, 0, len(fields.List))
 	for _, field := range fields.List {
+		names := field.Names
+		if len(names) == 0 {
+			// Embedded type. Use the name of the type. It must be of type ident or *ident.
+			// Nothing else is allowed.
+			switch ident := field.Type.(type) {
+			case *ast.Ident:
+				if isInterface && ident.Name == "error" && ident.Obj == nil {
+					// For documentation purposes, we consider the builtin error
+					// type special when embedded in an interface, such that it
+					// always gets shown publicly.
+					list = append(list, field)
+					continue
+				}
+				names = []*ast.Ident{ident}
+			case *ast.StarExpr:
+				// Must have the form *identifier.
+				// This is only valid on embedded types in structs.
+				if ident, ok := ident.X.(*ast.Ident); ok && !isInterface {
+					names = []*ast.Ident{ident}
+				}
+			case *ast.SelectorExpr:
+				// An embedded type may refer to a type in another package.
+				names = []*ast.Ident{ident.Sel}
+			}
+			if names == nil {
+				// Can only happen if AST is incorrect. Safe to continue with a nil list.
+				log.Print("invalid program: unexpected type for embedded field")
+			}
+		}
 		// Trims if any is unexported. Good enough in practice.
 		ok := true
-		for _, name := range field.Names {
+		for _, name := range names {
 			if !isExported(name.Name) {
 				trimmed = true
 				ok = false
@@ -465,13 +558,16 @@ func trimUnexportedFields(fields *ast.FieldList, what string) *ast.FieldList {
 		return fields
 	}
 	unexportedField := &ast.Field{
-		Type: ast.NewIdent(""), // Hack: printer will treat this as a field with a named type.
+		Type: &ast.Ident{
+			// Hack: printer will treat this as a field with a named type.
+			// Setting Name and NamePos to ("", fields.Closing-1) ensures that
+			// when Pos and End are called on this field, they return the
+			// position right before closing '}' character.
+			Name:    "",
+			NamePos: fields.Closing - 1,
+		},
 		Comment: &ast.CommentGroup{
-			List: []*ast.Comment{
-				&ast.Comment{
-					Text: fmt.Sprintf("// Has unexported %s.\n", what),
-				},
-			},
+			List: []*ast.Comment{{Text: fmt.Sprintf("// Has unexported %s.\n", what)}},
 		},
 	}
 	return &ast.FieldList{
@@ -508,11 +604,9 @@ func (pkg *Package) printMethodDoc(symbol, method string) bool {
 }
 
 // methodDoc prints the docs for matches of symbol.method.
-func (pkg *Package) methodDoc(symbol, method string) {
+func (pkg *Package) methodDoc(symbol, method string) bool {
 	defer pkg.flush()
-	if !pkg.printMethodDoc(symbol, method) {
-		pkg.Fatalf("no method %s.%s in package %s installed in %q", symbol, method, pkg.name, pkg.build.ImportPath)
-	}
+	return pkg.printMethodDoc(symbol, method)
 }
 
 // match reports whether the user's symbol matches the program's.

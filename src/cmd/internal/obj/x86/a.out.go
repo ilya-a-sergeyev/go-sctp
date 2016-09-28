@@ -1,5 +1,5 @@
 // Inferno utils/6c/6.out.h
-// http://code.google.com/p/inferno-os/source/browse/utils/6c/6.out.h
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/6c/6.out.h
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -8,7 +8,7 @@
 //	Portions Copyright © 2004,2006 Bruce Ellis
 //	Portions Copyright © 2005-2007 C H Forsyth (forsyth@terzarima.net)
 //	Revisions Copyright © 2000-2007 Lucent Technologies Inc. and others
-//	Portions Copyright © 2009 The Go Authors.  All rights reserved.
+//	Portions Copyright © 2009 The Go Authors. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,12 @@ package x86
 import "cmd/internal/obj"
 
 //go:generate go run ../stringer.go -i $GOFILE -o anames.go -p x86
+
+const (
+	/* mark flags */
+	DONE          = 1 << iota
+	PRESERVEFLAGS // not allowed to clobber flags
+)
 
 /*
  *	amd64
@@ -89,7 +95,11 @@ const (
 	ADIVL
 	ADIVW
 	AENTER
+	AHADDPD
+	AHADDPS
 	AHLT
+	AHSUBPD
+	AHSUBPS
 	AIDIVB
 	AIDIVL
 	AIDIVW
@@ -181,6 +191,9 @@ const (
 	APAUSE
 	APOPAL
 	APOPAW
+	APOPCNTW
+	APOPCNTL
+	APOPCNTQ
 	APOPFL
 	APOPFW
 	APOPL
@@ -282,8 +295,6 @@ const (
 	AFMOVX
 	AFMOVXP
 
-	AFCOMB
-	AFCOMBP
 	AFCOMD
 	AFCOMDP
 	AFCOMDPP
@@ -500,16 +511,29 @@ const (
 	AXADDQ
 	AXCHGQ
 	AXORQ
+	AXGETBV
 
 	// media
 	AADDPD
 	AADDPS
 	AADDSD
 	AADDSS
+	AANDNL
+	AANDNQ
 	AANDNPD
 	AANDNPS
 	AANDPD
 	AANDPS
+	ABEXTRL
+	ABEXTRQ
+	ABLSIL
+	ABLSIQ
+	ABLSMSKL
+	ABLSMSKQ
+	ABLSRL
+	ABLSRQ
+	ABZHIL
+	ABZHIQ
 	ACMPPD
 	ACMPPS
 	ACMPSD
@@ -547,6 +571,7 @@ const (
 	AFXRSTOR64
 	AFXSAVE
 	AFXSAVE64
+	ALDDQU
 	ALDMXCSR
 	AMASKMOVOU
 	AMASKMOVQ
@@ -583,6 +608,8 @@ const (
 	AMULPS
 	AMULSD
 	AMULSS
+	AMULXL
+	AMULXQ
 	AORPD
 	AORPS
 	APACKSSLW
@@ -596,13 +623,6 @@ const (
 	APADDUSB
 	APADDUSW
 	APADDW
-	APANDB
-	APANDL
-	APANDSB
-	APANDSW
-	APANDUSB
-	APANDUSW
-	APANDW
 	APAND
 	APANDN
 	APAVGB
@@ -613,53 +633,64 @@ const (
 	APCMPGTB
 	APCMPGTL
 	APCMPGTW
+	APDEPL
+	APDEPQ
+	APEXTL
+	APEXTQ
+	APEXTRB
+	APEXTRD
+	APEXTRQ
 	APEXTRW
-	APFACC
-	APFADD
-	APFCMPEQ
-	APFCMPGE
-	APFCMPGT
-	APFMAX
-	APFMIN
-	APFMUL
-	APFNACC
-	APFPNACC
-	APFRCP
-	APFRCPIT1
-	APFRCPI2T
-	APFRSQIT1
-	APFRSQRT
-	APFSUB
-	APFSUBR
-	APINSRW
+	APHADDD
+	APHADDSW
+	APHADDW
+	APHMINPOSUW
+	APHSUBD
+	APHSUBSW
+	APHSUBW
+	APINSRB
 	APINSRD
 	APINSRQ
+	APINSRW
 	APMADDWL
 	APMAXSW
 	APMAXUB
 	APMINSW
 	APMINUB
 	APMOVMSKB
-	APMULHRW
+	APMOVSXBD
+	APMOVSXBQ
+	APMOVSXBW
+	APMOVSXDQ
+	APMOVSXWD
+	APMOVSXWQ
+	APMOVZXBD
+	APMOVZXBQ
+	APMOVZXBW
+	APMOVZXDQ
+	APMOVZXWD
+	APMOVZXWQ
+	APMULDQ
 	APMULHUW
 	APMULHW
+	APMULLD
 	APMULLW
 	APMULULQ
 	APOR
 	APSADBW
+	APSHUFB
 	APSHUFHW
 	APSHUFL
 	APSHUFLW
 	APSHUFW
-	APSHUFB
-	APSLLO
 	APSLLL
+	APSLLO
 	APSLLQ
 	APSLLW
 	APSRAL
 	APSRAW
-	APSRLO
 	APSRLL
+	APSRLO
 	APSRLQ
 	APSRLW
 	APSUBB
@@ -670,7 +701,6 @@ const (
 	APSUBUSB
 	APSUBUSW
 	APSUBW
-	APSWAPL
 	APUNPCKHBW
 	APUNPCKHLQ
 	APUNPCKHQDQ
@@ -684,6 +714,12 @@ const (
 	ARCPSS
 	ARSQRTPS
 	ARSQRTSS
+	ASARXL
+	ASARXQ
+	ASHLXL
+	ASHLXQ
+	ASHRXL
+	ASHRXQ
 	ASHUFPD
 	ASHUFPS
 	ASQRTPD
@@ -703,11 +739,8 @@ const (
 	AUNPCKLPS
 	AXORPD
 	AXORPS
+	APCMPESTRI
 
-	APF2IW
-	APF2IL
-	API2FW
-	API2FL
 	ARETFW
 	ARETFL
 	ARETFQ
@@ -734,8 +767,42 @@ const (
 	AAESIMC
 	AAESKEYGENASSIST
 
+	AROUNDPS
+	AROUNDSS
+	AROUNDPD
+	AROUNDSD
+
 	APSHUFD
 	APCLMULQDQ
+
+	AVZEROUPPER
+	AVMOVDQU
+	AVMOVNTDQ
+	AVMOVDQA
+	AVPCMPEQB
+	AVPXOR
+	AVPMOVMSKB
+	AVPAND
+	AVPTEST
+	AVPBROADCASTB
+	AVPSHUFB
+	AVPSHUFD
+	AVPERM2F128
+	AVPALIGNR
+	AVPADDQ
+	AVPADDD
+	AVPSRLDQ
+	AVPSLLDQ
+	AVPSRLQ
+	AVPSLLQ
+	AVPSRLD
+	AVPSLLD
+	AVPOR
+	AVPBLENDD
+	AVINSERTI128
+	AVPERM2I128
+	ARORXL
+	ARORXQ
 
 	// from 386
 	AJCXZW
@@ -751,6 +818,14 @@ const (
 	AFCOMIP
 	AFUCOMI
 	AFUCOMIP
+
+	// TSX
+	AXACQUIRE
+	AXRELEASE
+	AXBEGIN
+	AXEND
+	AXABORT
+	AXTEST
 
 	ALAST
 )
@@ -834,6 +909,23 @@ const (
 	REG_X14
 	REG_X15
 
+	REG_Y0
+	REG_Y1
+	REG_Y2
+	REG_Y3
+	REG_Y4
+	REG_Y5
+	REG_Y6
+	REG_Y7
+	REG_Y8
+	REG_Y9
+	REG_Y10
+	REG_Y11
+	REG_Y12
+	REG_Y13
+	REG_Y14
+	REG_Y15
+
 	REG_CS
 	REG_SS
 	REG_DS
@@ -894,7 +986,6 @@ const (
 	REGRET   = REG_AX
 	FREGRET  = REG_X0
 	REGSP    = REG_SP
-	REGTMP   = REG_DI
 	REGCTXT  = REG_DX
 	REGEXT   = REG_R15     /* compiler allocates external registers R15 down */
 	FREGMIN  = REG_X0 + 5  /* first register variable */

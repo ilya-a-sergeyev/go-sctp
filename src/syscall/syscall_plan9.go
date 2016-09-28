@@ -56,6 +56,7 @@ func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err ErrorSt
 func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2, err uintptr)
 func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr)
 
+//go:nosplit
 func atoi(b []byte) (n uint) {
 	n = 0
 	for i := 0; i < len(b); i++ {
@@ -303,8 +304,6 @@ func Gettimeofday(tv *Timeval) error {
 	*tv = NsecToTimeval(nsec)
 	return nil
 }
-
-func Getpagesize() int { return 0x1000 }
 
 func Getegid() (egid int) { return -1 }
 func Geteuid() (euid int) { return -1 }

@@ -6,9 +6,10 @@ package syscall
 
 import "unsafe"
 
-const _SYS_dup = SYS_DUP2
-
-func Getpagesize() int { return 4096 }
+const (
+	_SYS_dup      = SYS_DUP2
+	_SYS_getdents = SYS_GETDENTS64
+)
 
 func TimespecToNsec(ts Timespec) int64 { return int64(ts.Sec)*1e9 + int64(ts.Nsec) }
 

@@ -5,11 +5,12 @@
 package ssa
 
 // nilcheckelim eliminates unnecessary nil checks.
+// runs on machine-independent code.
 func nilcheckelim(f *Func) {
 	// A nil check is redundant if the same nil check was successful in a
 	// dominating block. The efficacy of this pass depends heavily on the
 	// efficacy of the cse pass.
-	idom := dominators(f)
+	idom := f.idom()
 	domTree := make([][]*Block, f.NumBlocks())
 
 	// Create a block ID -> [dominees] mapping
@@ -26,22 +27,21 @@ func nilcheckelim(f *Func) {
 
 	type walkState int
 	const (
-		Work   walkState = iota // clear nil check if we should and traverse to dominees regardless
-		RecPtr                  // record the pointer as being nil checked
-		ClearPtr
+		Work     walkState = iota // process nil checks and traverse to dominees
+		ClearPtr                  // forget the fact that ptr is nil
 	)
 
 	type bp struct {
-		block *Block // block, or nil in RecPtr/ClearPtr state
-		ptr   *Value // if non-nil, ptr that is to be set/cleared in RecPtr/ClearPtr state
+		block *Block // block, or nil in ClearPtr state
+		ptr   *Value // if non-nil, ptr that is to be cleared in ClearPtr state
 		op    walkState
 	}
 
 	work := make([]bp, 0, 256)
-	work = append(work, bp{block: f.Entry, ptr: checkedptr(f.Entry)})
+	work = append(work, bp{block: f.Entry})
 
 	// map from value ID to bool indicating if value is known to be non-nil
-	// in the current dominator path being walked.  This slice is updated by
+	// in the current dominator path being walked. This slice is updated by
 	// walkStates to maintain the known non-nil values.
 	nonNilValues := make([]bool, f.NumValues())
 
@@ -74,118 +74,151 @@ func nilcheckelim(f *Func) {
 		node := work[len(work)-1]
 		work = work[:len(work)-1]
 
-		var pushRecPtr bool
 		switch node.op {
 		case Work:
-			if node.ptr != nil {
-				// already have a nilcheck in the dominator path
-				if nonNilValues[node.ptr.ID] {
-					// Eliminate the nil check.
-					// The deadcode pass will remove vestigial values,
-					// and the fuse pass will join this block with its successor.
-					node.block.Kind = BlockPlain
-					node.block.Control = nil
-					f.removePredecessor(node.block, node.block.Succs[1])
-					node.block.Succs = node.block.Succs[:1]
-				} else {
-					// new nilcheck so add a ClearPtr node to clear the
-					// ptr from the map of nil checks once we traverse
-					// back up the tree
-					work = append(work, bp{op: ClearPtr, ptr: node.ptr})
-					// and cause a new setPtr to be appended after the
-					// block's dominees
-					pushRecPtr = true
+			b := node.block
+
+			// First, see if we're dominated by an explicit nil check.
+			if len(b.Preds) == 1 {
+				p := b.Preds[0].b
+				if p.Kind == BlockIf && p.Control.Op == OpIsNonNil && p.Succs[0].b == b {
+					ptr := p.Control.Args[0]
+					if !nonNilValues[ptr.ID] {
+						nonNilValues[ptr.ID] = true
+						work = append(work, bp{op: ClearPtr, ptr: ptr})
+					}
 				}
 			}
-		case RecPtr:
-			nonNilValues[node.ptr.ID] = true
-			continue
+
+			// Next, process values in the block.
+			i := 0
+			for _, v := range b.Values {
+				b.Values[i] = v
+				i++
+				switch v.Op {
+				case OpIsNonNil:
+					ptr := v.Args[0]
+					if nonNilValues[ptr.ID] {
+						// This is a redundant explicit nil check.
+						v.reset(OpConstBool)
+						v.AuxInt = 1 // true
+					}
+				case OpNilCheck:
+					ptr := v.Args[0]
+					if nonNilValues[ptr.ID] {
+						// This is a redundant implicit nil check.
+						// Logging in the style of the former compiler -- and omit line 1,
+						// which is usually in generated code.
+						if f.Config.Debug_checknil() && v.Line > 1 {
+							f.Config.Warnl(v.Line, "removed nil check")
+						}
+						v.reset(OpUnknown)
+						i--
+						continue
+					}
+					// Record the fact that we know ptr is non nil, and remember to
+					// undo that information when this dominator subtree is done.
+					nonNilValues[ptr.ID] = true
+					work = append(work, bp{op: ClearPtr, ptr: ptr})
+				}
+			}
+			for j := i; j < len(b.Values); j++ {
+				b.Values[j] = nil
+			}
+			b.Values = b.Values[:i]
+
+			// Add all dominated blocks to the work list.
+			for _, w := range domTree[node.block.ID] {
+				work = append(work, bp{op: Work, block: w})
+			}
+
 		case ClearPtr:
 			nonNilValues[node.ptr.ID] = false
 			continue
 		}
+	}
+}
 
-		var nilBranch *Block
-		for _, w := range domTree[node.block.ID] {
-			// TODO: Since we handle the false side of OpIsNonNil
-			// correctly, look into rewriting user nil checks into
-			// OpIsNonNil so they can be eliminated also
+// All platforms are guaranteed to fault if we load/store to anything smaller than this address.
+const minZeroPage = 4096
 
-			// we are about to traverse down the 'ptr is nil' side
-			// of a nilcheck block, so save it for later
-			if node.block.Kind == BlockIf && node.block.Control.Op == OpIsNonNil &&
-				w == node.block.Succs[1] {
-				nilBranch = w
+// nilcheckelim2 eliminates unnecessary nil checks.
+// Runs after lowering and scheduling.
+func nilcheckelim2(f *Func) {
+	unnecessary := f.newSparseSet(f.NumValues())
+	defer f.retSparseSet(unnecessary)
+	for _, b := range f.Blocks {
+		// Walk the block backwards. Find instructions that will fault if their
+		// input pointer is nil. Remove nil checks on those pointers, as the
+		// faulting instruction effectively does the nil check for free.
+		unnecessary.clear()
+		for i := len(b.Values) - 1; i >= 0; i-- {
+			v := b.Values[i]
+			if opcodeTable[v.Op].nilCheck && unnecessary.contains(v.Args[0].ID) {
+				if f.Config.Debug_checknil() && int(v.Line) > 1 {
+					f.Config.Warnl(v.Line, "removed nil check")
+				}
+				v.reset(OpUnknown)
 				continue
 			}
-			work = append(work, bp{block: w, ptr: checkedptr(w)})
-		}
+			if v.Type.IsMemory() || v.Type.IsTuple() && v.Type.FieldType(1).IsMemory() {
+				if v.Op == OpVarDef || v.Op == OpVarKill || v.Op == OpVarLive {
+					// These ops don't really change memory.
+					continue
+				}
+				// This op changes memory.  Any faulting instruction after v that
+				// we've recorded in the unnecessary map is now obsolete.
+				unnecessary.clear()
+			}
 
-		if nilBranch != nil {
-			// we pop from the back of the work slice, so this sets
-			// up the false branch to be operated on before the
-			// node.ptr is recorded
-			work = append(work, bp{op: RecPtr, ptr: node.ptr})
-			work = append(work, bp{block: nilBranch, ptr: checkedptr(nilBranch)})
-		} else if pushRecPtr {
-			work = append(work, bp{op: RecPtr, ptr: node.ptr})
-		}
-	}
-}
-
-// nilcheckelim0 is the original redundant nilcheck elimination algorithm.
-func nilcheckelim0(f *Func) {
-	// Exit early if there are no nil checks to eliminate.
-	var found bool
-	for _, b := range f.Blocks {
-		if checkedptr(b) != nil {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return
-	}
-
-	// Eliminate redundant nil checks.
-	// A nil check is redundant if the same
-	// nil check has been performed by a
-	// dominating block.
-	// The efficacy of this pass depends
-	// heavily on the efficacy of the cse pass.
-	idom := dominators(f) // TODO: cache the dominator tree in the function, clearing when the CFG changes?
-	for _, b := range f.Blocks {
-		ptr := checkedptr(b)
-		if ptr == nil {
-			continue
-		}
-		var elim bool
-		// Walk up the dominator tree,
-		// looking for identical nil checks.
-		// TODO: This loop is O(n^2). See BenchmarkNilCheckDeep*.
-		for c := idom[b.ID]; c != nil; c = idom[c.ID] {
-			if checkedptr(c) == ptr {
-				elim = true
-				break
+			// Find any pointers that this op is guaranteed to fault on if nil.
+			var ptrstore [2]*Value
+			ptrs := ptrstore[:0]
+			if opcodeTable[v.Op].faultOnNilArg0 {
+				ptrs = append(ptrs, v.Args[0])
+			}
+			if opcodeTable[v.Op].faultOnNilArg1 {
+				ptrs = append(ptrs, v.Args[1])
+			}
+			for _, ptr := range ptrs {
+				// Check to make sure the offset is small.
+				switch opcodeTable[v.Op].auxType {
+				case auxSymOff:
+					if v.Aux != nil || v.AuxInt < 0 || v.AuxInt >= minZeroPage {
+						continue
+					}
+				case auxSymValAndOff:
+					off := ValAndOff(v.AuxInt).Off()
+					if v.Aux != nil || off < 0 || off >= minZeroPage {
+						continue
+					}
+				case auxInt64:
+					// ARM uses this auxType for duffcopy/duffzero/alignment info.
+					// It does not affect the effective address.
+				case auxNone:
+					// offset is zero.
+				default:
+					v.Fatalf("can't handle aux %s (type %d) yet\n", v.auxString(), int(opcodeTable[v.Op].auxType))
+				}
+				// This instruction is guaranteed to fault if ptr is nil.
+				// Any previous nil check op is unnecessary.
+				unnecessary.add(ptr.ID)
 			}
 		}
-		if elim {
-			// Eliminate the nil check.
-			// The deadcode pass will remove vestigial values,
-			// and the fuse pass will join this block with its successor.
-			b.Kind = BlockPlain
-			b.Control = nil
-			f.removePredecessor(b, b.Succs[1])
-			b.Succs = b.Succs[:1]
+		// Remove values we've clobbered with OpUnknown.
+		i := 0
+		for _, v := range b.Values {
+			if v.Op != OpUnknown {
+				b.Values[i] = v
+				i++
+			}
 		}
-	}
-}
+		for j := i; j < len(b.Values); j++ {
+			b.Values[j] = nil
+		}
+		b.Values = b.Values[:i]
 
-// checkedptr returns the Value, if any,
-// that is used in a nil check in b's Control op.
-func checkedptr(b *Block) *Value {
-	if b.Kind == BlockIf && b.Control.Op == OpIsNonNil {
-		return b.Control.Args[0]
+		// TODO: if b.Kind == BlockPlain, start the analysis in the subsequent block to find
+		// more unnecessary nil checks.  Would fix test/nilptr3_ssa.go:157.
 	}
-	return nil
 }

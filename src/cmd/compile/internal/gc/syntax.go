@@ -15,10 +15,10 @@ type Node struct {
 	// Generic recursive walks should follow these fields.
 	Left  *Node
 	Right *Node
-	Ninit *NodeList
-	Nbody *NodeList
-	List  *NodeList
-	Rlist *NodeList
+	Ninit Nodes
+	Nbody Nodes
+	List  Nodes
+	Rlist Nodes
 
 	// most nodes
 	Type *Type
@@ -33,6 +33,13 @@ type Node struct {
 	Sym *Sym        // various
 	E   interface{} // Opt or Val, see methods below
 
+	// Various. Usually an offset into a struct. For example, ONAME nodes
+	// that refer to local variables use it to identify their stack frame
+	// position. ODOT, ODOTPTR, and OINDREG use it to indicate offset
+	// relative to their base address. ONAME nodes on the left side of an
+	// OKEY within an OSTRUCTLIT use it to store the named field's offset.
+	// OXCASE and OXFALL use it to validate the use of fallthrough.
+	// Possibly still more uses. If you find any, document them.
 	Xoffset int64
 
 	Lineno int32
@@ -42,30 +49,79 @@ type Node struct {
 
 	Esc uint16 // EscXXX
 
-	Op          uint8
-	Nointerface bool
-	Ullman      uint8 // sethi/ullman number
-	Addable     bool  // addressable
-	Etype       uint8 // op for OASOP, etype for OTYPE, exclam for export, 6g saved reg
-	Bounded     bool  // bounds check unnecessary
-	Class       uint8 // PPARAM, PAUTO, PEXTERN, etc
-	Embedded    uint8 // ODCLFIELD embedded type
-	Colas       bool  // OAS resulting from :=
-	Diag        uint8 // already printed error about this
-	Noescape    bool  // func arguments do not escape; TODO(rsc): move Noescape to Func struct (see CL 7360)
-	Walkdef     uint8
-	Typecheck   uint8
-	Local       bool
-	Dodata      uint8
-	Initorder   uint8
-	Used        bool
-	Isddd       bool // is the argument variadic
-	Implicit    bool
-	Addrtaken   bool // address taken, even if not moved to heap
-	Assigned    bool // is the variable ever assigned to
-	Likely      int8 // likeliness of if statement
-	Hasbreak    bool // has break statement
-	hasVal      int8 // +1 for Val, -1 for Opt, 0 for not yet set
+	Op        Op
+	Ullman    uint8 // sethi/ullman number
+	Addable   bool  // addressable
+	Etype     EType // op for OASOP, etype for OTYPE, exclam for export, 6g saved reg, ChanDir for OTCHAN
+	Bounded   bool  // bounds check unnecessary
+	NonNil    bool  // guaranteed to be non-nil
+	Class     Class // PPARAM, PAUTO, PEXTERN, etc
+	Embedded  uint8 // ODCLFIELD embedded type
+	Colas     bool  // OAS resulting from :=
+	Diag      uint8 // already printed error about this
+	Noescape  bool  // func arguments do not escape; TODO(rsc): move Noescape to Func struct (see CL 7360)
+	Walkdef   uint8 // tracks state during typecheckdef; 2 == loop detected
+	Typecheck uint8 // tracks state during typechecking; 2 == loop detected
+	Local     bool
+	IsStatic  bool // whether this Node will be converted to purely static data
+	Initorder uint8
+	Used      bool // for variable/label declared and not used error
+	Isddd     bool // is the argument variadic
+	Implicit  bool
+	Addrtaken bool  // address taken, even if not moved to heap
+	Assigned  bool  // is the variable ever assigned to
+	Likely    int8  // likeliness of if statement
+	hasVal    int8  // +1 for Val, -1 for Opt, 0 for not yet set
+	flags     uint8 // TODO: store more bool fields in this flag field
+}
+
+const (
+	hasBreak = 1 << iota
+	isClosureVar
+	isOutputParamHeapAddr
+	noInline // used internally by inliner to indicate that a function call should not be inlined; set for OCALLFUNC and OCALLMETH only
+)
+
+func (n *Node) HasBreak() bool {
+	return n.flags&hasBreak != 0
+}
+func (n *Node) SetHasBreak(b bool) {
+	if b {
+		n.flags |= hasBreak
+	} else {
+		n.flags &^= hasBreak
+	}
+}
+func (n *Node) isClosureVar() bool {
+	return n.flags&isClosureVar != 0
+}
+func (n *Node) setIsClosureVar(b bool) {
+	if b {
+		n.flags |= isClosureVar
+	} else {
+		n.flags &^= isClosureVar
+	}
+}
+func (n *Node) noInline() bool {
+	return n.flags&noInline != 0
+}
+func (n *Node) setNoInline(b bool) {
+	if b {
+		n.flags |= noInline
+	} else {
+		n.flags &^= noInline
+	}
+}
+
+func (n *Node) IsOutputParamHeapAddr() bool {
+	return n.flags&isOutputParamHeapAddr != 0
+}
+func (n *Node) setIsOutputParamHeapAddr(b bool) {
+	if b {
+		n.flags |= isOutputParamHeapAddr
+	} else {
+		n.flags &^= isOutputParamHeapAddr
+	}
 }
 
 // Val returns the Val for the node.
@@ -81,7 +137,7 @@ func (n *Node) SetVal(v Val) {
 	if n.hasVal == -1 {
 		Debug['h'] = 1
 		Dump("have Opt", n)
-		Fatal("have Opt")
+		Fatalf("have Opt")
 	}
 	n.hasVal = +1
 	n.E = v.U
@@ -104,83 +160,153 @@ func (n *Node) SetOpt(x interface{}) {
 	if n.hasVal == +1 {
 		Debug['h'] = 1
 		Dump("have Val", n)
-		Fatal("have Val")
+		Fatalf("have Val")
 	}
 	n.hasVal = -1
 	n.E = x
 }
 
-// Name holds Node fields used only by named nodes (ONAME, OPACK, some OLITERAL).
+// Name holds Node fields used only by named nodes (ONAME, OPACK, OLABEL, ODCLFIELD, some OLITERAL).
 type Name struct {
-	Pack      *Node // real package for import . names
-	Pkg       *Pkg  // pkg for OPACK nodes
-	Heapaddr  *Node // temp holding heap address of param
-	Inlvar    *Node // ONAME substitute while inlining
-	Defn      *Node // initializing assignment
-	Curfn     *Node // function for local variables
-	Param     *Param
-	Decldepth int32 // declaration loop depth, increased for every loop or label
-	Vargen    int32 // unique name for ONAME within a function.  Function outputs are numbered starting at one.
-	Iota      int32 // value if this name is iota
+	Pack      *Node  // real package for import . names
+	Pkg       *Pkg   // pkg for OPACK nodes
+	Heapaddr  *Node  // temp holding heap address of param (could move to Param?)
+	Inlvar    *Node  // ONAME substitute while inlining (could move to Param?)
+	Defn      *Node  // initializing assignment
+	Curfn     *Node  // function for local variables
+	Param     *Param // additional fields for ONAME, ODCLFIELD
+	Decldepth int32  // declaration loop depth, increased for every loop or label
+	Vargen    int32  // unique name for ONAME within a function.  Function outputs are numbered starting at one.
+	Iota      int32  // value if this name is iota
 	Funcdepth int32
 	Method    bool // OCALLMETH name
 	Readonly  bool
 	Captured  bool // is the variable captured by a closure
 	Byval     bool // is the variable captured by value or by reference
 	Needzero  bool // if it contains pointers, needs to be zeroed on function entry
+	Keepalive bool // mark value live across unknown assembly call
 }
 
 type Param struct {
 	Ntype *Node
 
-	// ONAME func param with PHEAP
-	Outerexpr  *Node // expression copied into closure for variable
-	Stackparam *Node // OPARAM node referring to stack copy of param
+	// ONAME PAUTOHEAP
+	Stackcopy *Node // the PPARAM/PPARAMOUT on-stack slot (moved func params only)
 
 	// ONAME PPARAM
-	Field *Type // TFIELD in arg struct
+	Field *Field // TFIELD in arg struct
 
-	// ONAME closure param with PPARAMREF
-	Outer   *Node // outer PPARAMREF in nested closure
-	Closure *Node // ONAME/PHEAP <-> ONAME/PPARAMREF
+	// ONAME closure linkage
+	// Consider:
+	//
+	//	func f() {
+	//		x := 1 // x1
+	//		func() {
+	//			use(x) // x2
+	//			func() {
+	//				use(x) // x3
+	//				--- parser is here ---
+	//			}()
+	//		}()
+	//	}
+	//
+	// There is an original declaration of x and then a chain of mentions of x
+	// leading into the current function. Each time x is mentioned in a new closure,
+	// we create a variable representing x for use in that specific closure,
+	// since the way you get to x is different in each closure.
+	//
+	// Let's number the specific variables as shown in the code:
+	// x1 is the original x, x2 is when mentioned in the closure,
+	// and x3 is when mentioned in the closure in the closure.
+	//
+	// We keep these linked (assume N > 1):
+	//
+	//   - x1.Defn = original declaration statement for x (like most variables)
+	//   - x1.Innermost = current innermost closure x (in this case x3), or nil for none
+	//   - x1.isClosureVar() = false
+	//
+	//   - xN.Defn = x1, N > 1
+	//   - xN.isClosureVar() = true, N > 1
+	//   - x2.Outer = nil
+	//   - xN.Outer = x(N-1), N > 2
+	//
+	//
+	// When we look up x in the symbol table, we always get x1.
+	// Then we can use x1.Innermost (if not nil) to get the x
+	// for the innermost known closure function,
+	// but the first reference in a closure will find either no x1.Innermost
+	// or an x1.Innermost with .Funcdepth < Funcdepth.
+	// In that case, a new xN must be created, linked in with:
+	//
+	//     xN.Defn = x1
+	//     xN.Outer = x1.Innermost
+	//     x1.Innermost = xN
+	//
+	// When we finish the function, we'll process its closure variables
+	// and find xN and pop it off the list using:
+	//
+	//     x1 := xN.Defn
+	//     x1.Innermost = xN.Outer
+	//
+	// We leave xN.Innermost set so that we can still get to the original
+	// variable quickly. Not shown here, but once we're
+	// done parsing a function and no longer need xN.Outer for the
+	// lexical x reference links as described above, closurebody
+	// recomputes xN.Outer as the semantic x reference link tree,
+	// even filling in x in intermediate closures that might not
+	// have mentioned it along the way to inner closures that did.
+	// See closurebody for details.
+	//
+	// During the eventual compilation, then, for closure variables we have:
+	//
+	//     xN.Defn = original variable
+	//     xN.Outer = variable captured in next outward scope
+	//                to make closure where xN appears
+	//
+	// Because of the sharding of pieces of the node, x.Defn means x.Name.Defn
+	// and x.Innermost/Outer means x.Name.Param.Innermost/Outer.
+	Innermost *Node
+	Outer     *Node
 }
 
 // Func holds Node fields used only with function-like nodes.
 type Func struct {
 	Shortname  *Node
-	Enter      *NodeList
-	Exit       *NodeList
-	Cvars      *NodeList // closure params
-	Dcl        *NodeList // autodcl for this func/closure
-	Inldcl     *NodeList // copy of dcl for use in inlining
+	Enter      Nodes // for example, allocate and initialize memory for escaping parameters
+	Exit       Nodes
+	Cvars      Nodes   // closure params
+	Dcl        []*Node // autodcl for this func/closure
+	Inldcl     Nodes   // copy of dcl for use in inlining
 	Closgen    int
-	Outerfunc  *Node
-	Fieldtrack []*Type
-	Outer      *Node // outer func for closure
+	Outerfunc  *Node // outer function (for closure)
+	FieldTrack map[*Sym]struct{}
 	Ntype      *Node // signature
 	Top        int   // top context (Ecall, Eproc, etc)
 	Closure    *Node // OCLOSURE <-> ODCLFUNC
 	FCurfn     *Node
 	Nname      *Node
 
-	Inl     *NodeList // copy of the body for use in inlining
+	Inl     Nodes // copy of the body for use in inlining
 	InlCost int32
 	Depth   int32
 
-	Endlineno int32
+	Label int32 // largest auto-generated label in this function
 
-	Norace         bool // func must not have race detector annotations
-	Nosplit        bool // func should not execute on separate stack
-	Nowritebarrier bool // emit compiler error instead of write barrier
-	Dupok          bool // duplicate definitions ok
-	Wrapper        bool // is method wrapper
-	Needctxt       bool // function uses context register (has closure variables)
-	Systemstack    bool // must run on system stack
+	Endlineno int32
+	WBLineno  int32 // line number of first write barrier
+
+	Pragma        Pragma // go:xxx function annotations
+	Dupok         bool   // duplicate definitions ok
+	Wrapper       bool   // is method wrapper
+	Needctxt      bool   // function uses context register (has closure variables)
+	ReflectMethod bool   // function calls reflect.Type.Method or MethodByName
 }
+
+type Op uint8
 
 // Node ops.
 const (
-	OXXX = iota
+	OXXX = Op(iota)
 
 	// names
 	ONAME    // var, const or func name
@@ -194,7 +320,7 @@ const (
 	OSUB             // Left - Right
 	OOR              // Left | Right
 	OXOR             // Left ^ Right
-	OADDSTR          // Left + Right (string addition)
+	OADDSTR          // +{List} (string addition, list elements are strings)
 	OADDR            // &Left
 	OANDAND          // Left && Right
 	OAPPEND          // append(List)
@@ -225,7 +351,8 @@ const (
 	OCOMPLIT         // Right{List} (composite literal, not yet lowered to specific form)
 	OMAPLIT          // Type{List} (composite literal, Type is map)
 	OSTRUCTLIT       // Type{List} (composite literal, Type is struct)
-	OARRAYLIT        // Type{List} (composite literal, Type is array or slice)
+	OARRAYLIT        // Type{List} (composite literal, Type is array)
+	OSLICELIT        // Type{List} (composite literal, Type is slice)
 	OPTRLIT          // &Left (left is composite literal)
 	OCONV            // Type(Left) (type conversion)
 	OCONVIFACE       // Type(Left) (type conversion, to interface)
@@ -240,11 +367,11 @@ const (
 	ODCLTYPE  // type Int int
 
 	ODELETE    // delete(Left, Right)
-	ODOT       // Left.Right (Left is of struct type)
-	ODOTPTR    // Left.Right (Left is of pointer to struct type)
-	ODOTMETH   // Left.Right (Left is non-interface, Right is method name)
-	ODOTINTER  // Left.Right (Left is interface, Right is method name)
-	OXDOT      // Left.Right (before rewrite to one of the preceding)
+	ODOT       // Left.Sym (Left is of struct type)
+	ODOTPTR    // Left.Sym (Left is of pointer to struct type)
+	ODOTMETH   // Left.Sym (Left is non-interface, Right is method name)
+	ODOTINTER  // Left.Sym (Left is interface, Right is method name)
+	OXDOT      // Left.Sym (before rewrite to one of the preceding)
 	ODOTTYPE   // Left.Right or Left.Type (.Right during parsing, .Type once resolved)
 	ODOTTYPE2  // Left.Right or Left.Type (.Right during parsing, .Type once resolved; on rhs of OAS2DOTTYPE)
 	OEQ        // Left == Right
@@ -257,7 +384,7 @@ const (
 	OINDEX     // Left[Right] (index of array or slice)
 	OINDEXMAP  // Left[Right] (index of map)
 	OKEY       // Left:Right (key:value in struct/array/map literal, or slice index pair)
-	OPARAM     // variant of ONAME for on-stack copy of a parameter or return value that escapes.
+	OIDATA     // data word of an interface value in Left; TODO: move next to OITAB once it is easier to regenerate the binary blob in builtin.go (issues 15835, 15839)
 	OLEN       // len(Left)
 	OMAKE      // make(List) (before type checking converts to one of the following)
 	OMAKECHAN  // make(Type, Left) (type is chan)
@@ -299,7 +426,7 @@ const (
 	// statements
 	OBLOCK    // { List } (block of code)
 	OBREAK    // break
-	OCASE     // case List: Nbody (select case after processing; List==nil means default)
+	OCASE     // case Left or List[0]..List[1]: Nbody (select case after processing; Left==nil and List==nil means default)
 	OXCASE    // case List: Nbody (select case before processing; List==nil means default)
 	OCONTINUE // continue
 	ODEFER    // defer Left (Left must be call)
@@ -336,6 +463,7 @@ const (
 	OCFUNC      // reference to c function pointer (not go func value)
 	OCHECKNIL   // emit code to ensure pointer/interface not nil
 	OVARKILL    // variable is dead
+	OVARLIVE    // variable is alive
 
 	// thearch-specific registers
 	OREGISTER // a register, such as AX.
@@ -358,127 +486,123 @@ const (
 	OEND
 )
 
-// A NodeList is a linked list of nodes.
-// TODO(rsc): Some uses of NodeList should be made into slices.
-// The remaining ones probably just need a simple linked list,
-// not one with concatenation support.
-type NodeList struct {
-	N    *Node
-	Next *NodeList
-	End  *NodeList
-}
+// Nodes is a pointer to a slice of *Node.
+// For fields that are not used in most nodes, this is used instead of
+// a slice to save space.
+type Nodes struct{ slice *[]*Node }
 
-// concat returns the concatenation of the lists a and b.
-// The storage taken by both is reused for the result.
-func concat(a *NodeList, b *NodeList) *NodeList {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-
-	a.End.Next = b
-	a.End = b.End
-	b.End = nil
-	return a
-}
-
-// list1 returns a one-element list containing n.
-func list1(n *Node) *NodeList {
-	if n == nil {
+// Slice returns the entries in Nodes as a slice.
+// Changes to the slice entries (as in s[i] = n) will be reflected in
+// the Nodes.
+func (n Nodes) Slice() []*Node {
+	if n.slice == nil {
 		return nil
 	}
-	if n.Op == OBLOCK && n.Ninit == nil {
-		// Flatten list and steal storage.
-		// Poison pointer to catch errant uses.
-		l := n.List
+	return *n.slice
+}
 
-		n.List = nil
-		return l
+// Len returns the number of entries in Nodes.
+func (n Nodes) Len() int {
+	if n.slice == nil {
+		return 0
 	}
-
-	l := new(NodeList)
-	l.N = n
-	l.End = l
-	return l
+	return len(*n.slice)
 }
 
-// list returns the result of appending n to l.
-func list(l *NodeList, n *Node) *NodeList {
-	return concat(l, list1(n))
+// Index returns the i'th element of Nodes.
+// It panics if n does not have at least i+1 elements.
+func (n Nodes) Index(i int) *Node {
+	return (*n.slice)[i]
 }
 
-// listsort sorts *l in place according to the 3-way comparison function f.
-// The algorithm is mergesort, so it is guaranteed to be O(n log n).
-func listsort(l **NodeList, f func(*Node, *Node) int) {
-	if *l == nil || (*l).Next == nil {
+// First returns the first element of Nodes (same as n.Index(0)).
+// It panics if n has no elements.
+func (n Nodes) First() *Node {
+	return (*n.slice)[0]
+}
+
+// Second returns the second element of Nodes (same as n.Index(1)).
+// It panics if n has fewer than two elements.
+func (n Nodes) Second() *Node {
+	return (*n.slice)[1]
+}
+
+// Set sets n to a slice.
+// This takes ownership of the slice.
+func (n *Nodes) Set(s []*Node) {
+	if len(s) == 0 {
+		n.slice = nil
+	} else {
+		// Copy s and take address of t rather than s to avoid
+		// allocation in the case where len(s) == 0 (which is
+		// over 3x more common, dynamically, for make.bash).
+		t := s
+		n.slice = &t
+	}
+}
+
+// Set1 sets n to a slice containing a single node.
+func (n *Nodes) Set1(node *Node) {
+	n.slice = &[]*Node{node}
+}
+
+// Set2 sets n to a slice containing two nodes.
+func (n *Nodes) Set2(n1, n2 *Node) {
+	n.slice = &[]*Node{n1, n2}
+}
+
+// MoveNodes sets n to the contents of n2, then clears n2.
+func (n *Nodes) MoveNodes(n2 *Nodes) {
+	n.slice = n2.slice
+	n2.slice = nil
+}
+
+// SetIndex sets the i'th element of Nodes to node.
+// It panics if n does not have at least i+1 elements.
+func (n Nodes) SetIndex(i int, node *Node) {
+	(*n.slice)[i] = node
+}
+
+// Addr returns the address of the i'th element of Nodes.
+// It panics if n does not have at least i+1 elements.
+func (n Nodes) Addr(i int) **Node {
+	return &(*n.slice)[i]
+}
+
+// Append appends entries to Nodes.
+// If a slice is passed in, this will take ownership of it.
+func (n *Nodes) Append(a ...*Node) {
+	if len(a) == 0 {
 		return
 	}
-
-	l1 := *l
-	l2 := *l
-	for {
-		l2 = l2.Next
-		if l2 == nil {
-			break
-		}
-		l2 = l2.Next
-		if l2 == nil {
-			break
-		}
-		l1 = l1.Next
-	}
-
-	l2 = l1.Next
-	l1.Next = nil
-	l2.End = (*l).End
-	(*l).End = l1
-
-	l1 = *l
-	listsort(&l1, f)
-	listsort(&l2, f)
-
-	if f(l1.N, l2.N) < 0 {
-		*l = l1
+	if n.slice == nil {
+		n.slice = &a
 	} else {
-		*l = l2
-		l2 = l1
-		l1 = *l
+		*n.slice = append(*n.slice, a...)
 	}
-
-	// now l1 == *l; and l1 < l2
-
-	var le *NodeList
-	for (l1 != nil) && (l2 != nil) {
-		for (l1.Next != nil) && f(l1.Next.N, l2.N) < 0 {
-			l1 = l1.Next
-		}
-
-		// l1 is last one from l1 that is < l2
-		le = l1.Next // le is the rest of l1, first one that is >= l2
-		if le != nil {
-			le.End = (*l).End
-		}
-
-		(*l).End = l1       // cut *l at l1
-		*l = concat(*l, l2) // glue l2 to *l's tail
-
-		l1 = l2 // l1 is the first element of *l that is < the new l2
-		l2 = le // ... because l2 now is the old tail of l1
-	}
-
-	*l = concat(*l, l2) // any remainder
 }
 
-// count returns the length of the list l.
-func count(l *NodeList) int {
-	n := int64(0)
-	for ; l != nil; l = l.Next {
-		n++
+// Prepend prepends entries to Nodes.
+// If a slice is passed in, this will take ownership of it.
+func (n *Nodes) Prepend(a ...*Node) {
+	if len(a) == 0 {
+		return
 	}
-	if int64(int(n)) != n { // Overflow.
-		Yyerror("too many elements in list")
+	if n.slice == nil {
+		n.slice = &a
+	} else {
+		*n.slice = append(a, *n.slice...)
 	}
-	return int(n)
+}
+
+// AppendNodes appends the contents of *n2 to n, then clears n2.
+func (n *Nodes) AppendNodes(n2 *Nodes) {
+	switch {
+	case n2.slice == nil:
+	case n.slice == nil:
+		n.slice = n2.slice
+	default:
+		*n.slice = append(*n.slice, *n2.slice...)
+	}
+	n2.slice = nil
 }

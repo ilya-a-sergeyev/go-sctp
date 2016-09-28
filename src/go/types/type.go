@@ -6,8 +6,6 @@ package types
 
 import "sort"
 
-// TODO(gri) Revisit factory functions - make sure they have all relevant parameters.
-
 // A Type represents a type of Go.
 // All types implement the Type interface.
 type Type interface {
@@ -122,8 +120,6 @@ func (s *Slice) Elem() Type { return s.elem }
 type Struct struct {
 	fields []*Var
 	tags   []string // field tags; nil if there are no tags
-	// TODO(gri) access to offsets is not threadsafe - fix this
-	offsets []int64 // field offsets in bytes, lazily initialized
 }
 
 // NewStruct returns a new struct with the given fields and corresponding field tags.
@@ -228,7 +224,7 @@ func NewSignature(recv *Var, params, results *Tuple, variadic bool) *Signature {
 // function.
 //
 // For an abstract method, Recv returns the enclosing interface either
-// as a *Named or an *Interface.  Due to embedding, an interface may
+// as a *Named or an *Interface. Due to embedding, an interface may
 // contain methods whose receiver type is a different interface.
 func (s *Signature) Recv() *Var { return s.recv }
 
@@ -360,7 +356,7 @@ type Chan struct {
 // A ChanDir value indicates a channel direction.
 type ChanDir int
 
-// The direction of a channel is indicated by one of the following constants.
+// The direction of a channel is indicated by one of these constants.
 const (
 	SendRecv ChanDir = iota
 	SendOnly

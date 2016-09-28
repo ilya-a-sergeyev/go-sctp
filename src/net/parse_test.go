@@ -77,3 +77,24 @@ func TestGoDebugString(t *testing.T) {
 		}
 	}
 }
+
+func TestDtoi(t *testing.T) {
+	for _, tt := range []struct {
+		in  string
+		out int
+		off int
+		ok  bool
+	}{
+		{"", 0, 0, false},
+		{"0", 0, 1, true},
+		{"65536", 65536, 5, true},
+		{"123456789", big, 8, false},
+		{"-0", 0, 0, false},
+		{"-1234", 0, 0, false},
+	} {
+		n, i, ok := dtoi(tt.in)
+		if n != tt.out || i != tt.off || ok != tt.ok {
+			t.Errorf("got %d, %d, %v; want %d, %d, %v", n, i, ok, tt.out, tt.off, tt.ok)
+		}
+	}
+}

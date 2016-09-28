@@ -37,7 +37,7 @@ TEXT runtime·lwp_tramp(SB),NOSPLIT,$0
 	// Call fn
 	CALL	R12
 
-	// It shouldn't return.  If it does, exit.
+	// It shouldn't return. If it does, exit.
 	MOVL	$310, AX		// sys__lwp_exit
 	SYSCALL
 	JMP	-3(PC)			// keep exiting
@@ -207,7 +207,7 @@ TEXT runtime·getcontext(SB),NOSPLIT,$-8
 	RET
 
 TEXT runtime·sigprocmask(SB),NOSPLIT,$0
-	MOVL	mode+0(FP), DI		// arg 1 - how
+	MOVL	how+0(FP), DI		// arg 1 - how
 	MOVQ	new+8(FP), SI		// arg 2 - set
 	MOVQ	old+16(FP), DX		// arg 3 - oset
 	MOVL	$293, AX		// sys_sigprocmask
@@ -237,37 +237,21 @@ TEXT runtime·sigaction(SB),NOSPLIT,$-8
 	MOVL	$0xf1, 0xf1		// crash
 	RET
 
-TEXT runtime·sigtramp(SB),NOSPLIT,$64
-	get_tls(BX)
-
-	// check that g exists
-	MOVQ	g(BX), R10
-	CMPQ	R10, $0
-	JNE	5(PC)
-	MOVQ	DI, 0(SP)
-	MOVQ	$runtime·badsignal(SB), AX
+TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
+	MOVL	sig+8(FP), DI
+	MOVQ	info+16(FP), SI
+	MOVQ	ctx+24(FP), DX
+	MOVQ	fn+0(FP), AX
 	CALL	AX
 	RET
 
-	// save g
-	MOVQ	R10, 40(SP)
-
-	// g = m->signal
-	MOVQ	g_m(R10), AX
-	MOVQ	m_gsignal(AX), AX
-	MOVQ	AX, g(BX)
-
-	MOVQ	DI, 0(SP)
-	MOVQ	SI, 8(SP)
-	MOVQ	DX, 16(SP)
-	MOVQ	R10, 24(SP)
-
-	CALL	runtime·sighandler(SB)
-
-	// restore g
-	get_tls(BX)
-	MOVQ	40(SP), R10
-	MOVQ	R10, g(BX)
+TEXT runtime·sigtramp(SB),NOSPLIT,$32
+	MOVQ	DI, 0(SP)   // signum
+	MOVQ	SI, 8(SP)   // info
+	MOVQ	DX, 16(SP)  // ctx
+	MOVQ	R15, 24(SP) // for sigreturn
+	CALL	runtime·sigtrampgo(SB)
+	MOVQ	24(SP), R15
 	RET
 
 TEXT runtime·mmap(SB),NOSPLIT,$0
@@ -353,11 +337,11 @@ TEXT runtime·kqueue(SB),NOSPLIT,$0
 
 // int32 runtime·kevent(int kq, Kevent *changelist, int nchanges, Kevent *eventlist, int nevents, Timespec *timeout)
 TEXT runtime·kevent(SB),NOSPLIT,$0
-	MOVL	fd+0(FP), DI
-	MOVQ	ev1+8(FP), SI
-	MOVL	nev1+16(FP), DX
-	MOVQ	ev2+24(FP), R10
-	MOVL	nev2+32(FP), R8
+	MOVL	kq+0(FP), DI
+	MOVQ	ch+8(FP), SI
+	MOVL	nch+16(FP), DX
+	MOVQ	ev+24(FP), R10
+	MOVL	nev+32(FP), R8
 	MOVQ	ts+40(FP), R9
 	MOVL	$435, AX
 	SYSCALL

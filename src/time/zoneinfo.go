@@ -9,6 +9,8 @@ import (
 	"syscall"
 )
 
+//go:generate env ZONEINFO=$GOROOT/lib/time/zoneinfo.zip go run genzabbrs.go -output zoneinfo_abbrs_windows.go
+
 // A Location maps time instants to the zone in use at that time.
 // Typically, the Location represents the collection of time offsets
 // in use in a geographical area, such as CEST and CET for central Europe.
@@ -21,7 +23,7 @@ type Location struct {
 	// To avoid the binary search through tx, keep a
 	// static one-element cache that gives the correct
 	// zone for the time when the Location was created.
-	// if cacheStart <= t <= cacheEnd,
+	// if cacheStart <= t < cacheEnd,
 	// lookup can return cacheZone.
 	// The units for cacheStart and cacheEnd are seconds
 	// since January 1, 1970 UTC, to match the argument

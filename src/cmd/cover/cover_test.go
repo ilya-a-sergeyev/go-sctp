@@ -1,4 +1,4 @@
-// Copyright 2013 The Go Authors.  All rights reserved.
+// Copyright 2013 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -62,7 +62,7 @@ func TestCover(t *testing.T) {
 	}
 
 	// go build -o testcover
-	cmd := exec.Command("go", "build", "-o", testcover)
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", testcover)
 	run(cmd, t)
 
 	// defer removal of testcover
@@ -78,7 +78,7 @@ func TestCover(t *testing.T) {
 	}
 
 	// go run ./testdata/main.go ./testdata/test.go
-	cmd = exec.Command("go", "run", testMain, coverOutput)
+	cmd = exec.Command(testenv.GoToolPath(t), "run", testMain, coverOutput)
 	run(cmd, t)
 }
 

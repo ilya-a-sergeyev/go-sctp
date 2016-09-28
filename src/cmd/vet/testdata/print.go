@@ -8,9 +8,13 @@ package testdata
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"unsafe" // just for test case printing unsafe.Pointer
+
+	// For testing printf-like functions from external package.
+	"github.com/foobar/externalprintf"
 )
 
 func UnsafePointerPrintfTest() {
@@ -129,6 +133,7 @@ func PrintfTests() {
 	fmt.Printf("%.*s %d %g", 3, "hi", 23, 'x') // ERROR "arg 'x' for printf verb %g of wrong type"
 	fmt.Println()                              // not an error
 	fmt.Println("%s", "hi")                    // ERROR "possible formatting directive in Println call"
+	fmt.Println("0.0%")                        // correct (trailing % couldn't be a formatting directive)
 	fmt.Printf("%s", "hi", 3)                  // ERROR "wrong number of args for format in Printf call"
 	_ = fmt.Sprintf("%"+("s"), "hi", 3)        // ERROR "wrong number of args for format in Sprintf call"
 	fmt.Printf("%s%%%d", "hi", 3)              // correct
@@ -169,8 +174,8 @@ func PrintfTests() {
 	Printf("%[2]*.[1]*[3]d", 2, 3, 4)
 	fmt.Fprintf(os.Stderr, "%[2]*.[1]*[3]d", 2, 3, 4) // Use Fprintf to make sure we count arguments correctly.
 	// Bad argument reorderings.
-	Printf("%[xd", 3)                    // ERROR "illegal syntax for printf argument index"
-	Printf("%[x]d", 3)                   // ERROR "illegal syntax for printf argument index"
+	Printf("%[xd", 3)                    // ERROR "bad syntax for printf argument index: \[xd\]"
+	Printf("%[x]d", 3)                   // ERROR "bad syntax for printf argument index: \[x\]"
 	Printf("%[3]*s", "hi", 2)            // ERROR "missing argument for Printf.* reads arg 3, have only 2"
 	_ = fmt.Sprintf("%[3]d", 2)          // ERROR "missing argument for Sprintf.* reads arg 3, have only 1"
 	Printf("%[2]*.[1]*[3]d", 2, "hi", 4) // ERROR "arg .hi. for \* in printf format not of type int"
@@ -182,11 +187,11 @@ func PrintfTests() {
 	// Something that looks like an error interface but isn't, such as the (*T).Error method
 	// in the testing package.
 	var et1 errorTest1
-	fmt.Println(et1.Error())        // ERROR "no args in Error call"
+	fmt.Println(et1.Error())        // ok
 	fmt.Println(et1.Error("hi"))    // ok
 	fmt.Println(et1.Error("%d", 3)) // ERROR "possible formatting directive in Error call"
 	var et2 errorTest2
-	et2.Error()        // ERROR "no args in Error call"
+	et2.Error()        // ok
 	et2.Error("hi")    // ok, not an error method.
 	et2.Error("%d", 3) // ERROR "possible formatting directive in Error call"
 	var et3 errorTest3
@@ -195,6 +200,17 @@ func PrintfTests() {
 	et4.Error() // ok, not an error method.
 	var et5 errorTest5
 	et5.error() // ok, not an error method.
+	// Interfaces can be used with any verb.
+	var iface interface {
+		ToTheMadness() bool // Method ToTheMadness usually returns false
+	}
+	fmt.Printf("%f", iface) // ok: fmt treats interfaces as transparent and iface may well have a float concrete type
+	// Can't print a function.
+	Printf("%d", someFunction) // ERROR "arg someFunction in printf call is a function value, not a function call"
+	Printf("%v", someFunction) // ERROR "arg someFunction in printf call is a function value, not a function call"
+	Println(someFunction)      // ERROR "arg someFunction in Println call is a function value, not a function call"
+	Printf("%p", someFunction) // ok: maybe someone wants to see the pointer
+	Printf("%T", someFunction) // ok: maybe someone wants to see the type
 	// Bug: used to recur forever.
 	Printf("%p %x", recursiveStructV, recursiveStructV.next)
 	Printf("%p %x", recursiveStruct1V, recursiveStruct1V.next)
@@ -205,17 +221,102 @@ func PrintfTests() {
 	Log(3)       // OK
 	Log("%d", 3) // ERROR "possible formatting directive in Log call"
 	Logf("%d", 3)
-	Logf("%d", "hi") // ERROR "arg .hi. for printf verb %d of wrong type: untyped string"
+	Logf("%d", "hi") // ERROR "arg .hi. for printf verb %d of wrong type: string"
 
+	Errorf(1, "%d", 3)    // OK
+	Errorf(1, "%d", "hi") // ERROR "arg .hi. for printf verb %d of wrong type: string"
+
+	// Multiple string arguments before variadic args
+	errorf("WARNING", "foobar")            // OK
+	errorf("INFO", "s=%s, n=%d", "foo", 1) // OK
+	errorf("ERROR", "%d")                  // ERROR "format reads arg 1, have only 0 args"
+
+	// Printf from external package
+	externalprintf.Printf("%d", 42) // OK
+	externalprintf.Printf("foobar") // OK
+	level := 123
+	externalprintf.Logf(level, "%d", 42)                        // OK
+	externalprintf.Errorf(level, level, "foo %q bar", "foobar") // OK
+	externalprintf.Logf(level, "%d")                            // ERROR "format reads arg 1, have only 0 args"
+
+	// user-defined Println-like functions
+	ss := &someStruct{}
+	ss.Log(someFunction, "foo")          // OK
+	ss.Error(someFunction, someFunction) // OK
+	ss.Println()                         // OK
+	ss.Println(1.234, "foo")             // OK
+	ss.Println(1, someFunction)          // ERROR "arg someFunction in Println call is a function value, not a function call"
+	ss.log(someFunction)                 // OK
+	ss.log(someFunction, "bar", 1.33)    // OK
+	ss.log(someFunction, someFunction)   // ERROR "arg someFunction in log call is a function value, not a function call"
+
+	// indexed arguments
+	Printf("%d %[3]d %d %[2]d", 1, 2, 3, 4)             // OK
+	Printf("%d %[0]d %d %[2]d", 1, 2, 3, 4)             // ERROR "indexes start at 1"
+	Printf("%d %[3]d %d %[-2]d", 1, 2, 3, 4)            // ERROR "bad syntax for printf argument index: \[-2\]"
+	Printf("%d %[3]d %d %[2234234234234]d", 1, 2, 3, 4) // ERROR "bad syntax for printf argument index: .+ value out of range"
+	Printf("%d %[3]d %d %[2]d", 1, 2, 3)                // ERROR "format reads arg 4, have only 3 args"
+	Printf("%d %[3]d %d %[2]d", 1, 2, 3, 4, 5)          // ERROR "wrong number of args for format in Printf call: 4 needed but 5 args"
+	Printf("%[1][3]d", 1, 2)                            // ERROR "unrecognized printf verb '\['"
 }
+
+type someStruct struct{}
+
+// Log is non-variadic user-define Println-like function.
+// Calls to this func must be skipped when checking
+// for Println-like arguments.
+func (ss *someStruct) Log(f func(), s string) {}
+
+// Error is variadic user-define Println-like function.
+// Calls to this func mustn't be checked for Println-like arguments,
+// since variadic arguments type isn't interface{}.
+func (ss *someStruct) Error(args ...func()) {}
+
+// Println is variadic user-defined Println-like function.
+// Calls to this func must be checked for Println-like arguments.
+func (ss *someStruct) Println(args ...interface{}) {}
+
+// log is variadic user-defined Println-like function.
+// Calls to this func must be checked for Println-like arguments.
+func (ss *someStruct) log(f func(), args ...interface{}) {}
+
+// A function we use as a function value; it has no other purpose.
+func someFunction() {}
 
 // Printf is used by the test so we must declare it.
 func Printf(format string, args ...interface{}) {
 	panic("don't call - testing only")
 }
 
+// Println is used by the test so we must declare it.
+func Println(args ...interface{}) {
+	panic("don't call - testing only")
+}
+
+// Logf is used by the test so we must declare it.
+func Logf(format string, args ...interface{}) {
+	panic("don't call - testing only")
+}
+
+// Log is used by the test so we must declare it.
+func Log(args ...interface{}) {
+	panic("don't call - testing only")
+}
+
 // printf is used by the test so we must declare it.
 func printf(format string, args ...interface{}) {
+	panic("don't call - testing only")
+}
+
+// Errorf is used by the test for a case in which the first parameter
+// is not a format string.
+func Errorf(i int, format string, args ...interface{}) {
+	panic("don't call - testing only")
+}
+
+// errorf is used by the test for a case in which the function accepts multiple
+// string parameters before variadic arguments
+func errorf(level, format string, args ...interface{}) {
 	panic("don't call - testing only")
 }
 
@@ -297,14 +398,14 @@ func (s recursiveStringer) String() string {
 	_ = fmt.Sprintf("%v", s)  // ERROR "arg s for printf causes recursive call to String method"
 	_ = fmt.Sprintf("%v", &s) // ERROR "arg &s for printf causes recursive call to String method"
 	_ = fmt.Sprintf("%T", s)  // ok; does not recursively call String
-	return fmt.Sprintln(s)    // ERROR "arg s for print causes recursive call to String method"
+	return fmt.Sprintln(s)    // ERROR "arg s in Sprintln call causes recursive call to String method"
 }
 
 type recursivePtrStringer int
 
 func (p *recursivePtrStringer) String() string {
 	_ = fmt.Sprintf("%v", *p)
-	return fmt.Sprintln(p) // ERROR "arg p for print causes recursive call to String method"
+	return fmt.Sprintln(p) // ERROR "arg p in Sprintln call causes recursive call to String method"
 }
 
 type Formatter bool
@@ -339,4 +440,11 @@ var recursiveStruct1V = &RecursiveStruct1{}
 // Fix for issue 7149: Missing return type on String method caused fault.
 func (int) String() {
 	return ""
+}
+
+func (s *unknownStruct) Fprintln(w io.Writer, s string) {}
+
+func UnknownStructFprintln() {
+	s := unknownStruct{}
+	s.Fprintln(os.Stdout, "hello, world!") // OK
 }

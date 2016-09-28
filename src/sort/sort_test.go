@@ -6,10 +6,12 @@ package sort_test
 
 import (
 	"fmt"
+	"internal/testenv"
 	"math"
 	"math/rand"
 	. "sort"
 	"strconv"
+	stringspkg "strings"
 	"testing"
 )
 
@@ -106,6 +108,43 @@ func TestReverseSortIntSlice(t *testing.T) {
 		if i > len(data)/2 {
 			break
 		}
+	}
+}
+
+type nonDeterministicTestingData struct {
+	r *rand.Rand
+}
+
+func (t *nonDeterministicTestingData) Len() int {
+	return 500
+}
+func (t *nonDeterministicTestingData) Less(i, j int) bool {
+	if i < 0 || j < 0 || i >= t.Len() || j >= t.Len() {
+		panic("nondeterministic comparison out of bounds")
+	}
+	return t.r.Float32() < 0.5
+}
+func (t *nonDeterministicTestingData) Swap(i, j int) {
+	if i < 0 || j < 0 || i >= t.Len() || j >= t.Len() {
+		panic("nondeterministic comparison out of bounds")
+	}
+}
+
+func TestNonDeterministicComparison(t *testing.T) {
+	// Ensure that sort.Sort does not panic when Less returns inconsistent results.
+	// See https://golang.org/issue/14377.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Error(r)
+		}
+	}()
+
+	td := &nonDeterministicTestingData{
+		r: rand.New(rand.NewSource(0)),
+	}
+
+	for i := 0; i < 10; i++ {
+		Sort(td)
 	}
 }
 
@@ -469,10 +508,10 @@ func TestStability(t *testing.T) {
 	data.initB()
 	Stable(data)
 	if !IsSorted(data) {
-		t.Errorf("Stable shuffeled sorted %d ints (order)", n)
+		t.Errorf("Stable shuffled sorted %d ints (order)", n)
 	}
 	if !data.inOrder() {
-		t.Errorf("Stable shuffeled sorted %d ints (stability)", n)
+		t.Errorf("Stable shuffled sorted %d ints (stability)", n)
 	}
 
 	// sorted reversed
@@ -518,6 +557,9 @@ func TestCountStableOps(t *testing.T) { countOps(t, Stable, "Stable") }
 func TestCountSortOps(t *testing.T)   { countOps(t, Sort, "Sort  ") }
 
 func bench(b *testing.B, size int, algo func(Interface), name string) {
+	if stringspkg.HasSuffix(testenv.Builder(), "-race") && size > 1e4 {
+		b.Skip("skipping slow benchmark on race builder")
+	}
 	b.StopTimer()
 	data := make(intPairs, size)
 	x := ^uint32(0)

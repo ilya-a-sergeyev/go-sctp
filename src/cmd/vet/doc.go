@@ -29,57 +29,12 @@ check every possible problem and depends on unreliable heuristics
 so it should be used as guidance only, not as a firm indicator of
 program correctness.
 
-By default all checks are performed. If any flags are explicitly set
-to true, only those tests are run. Conversely, if any flag is
-explicitly set to false, only those tests are disabled.
-Thus -printf=true runs the printf check, -printf=false runs all checks
-except the printf check.
+By default the -all flag is set so all checks are performed.
+If any flags are explicitly set to true, only those tests are run. Conversely, if
+any flag is explicitly set to false, only those tests are disabled.  Thus -printf=true
+runs the printf check, -printf=false runs all checks except the printf check.
 
 Available checks:
-
-Printf family
-
-Flag: -printf
-
-Suspicious calls to functions in the Printf family, including any functions
-with these names, disregarding case:
-	Print Printf Println
-	Fprint Fprintf Fprintln
-	Sprint Sprintf Sprintln
-	Error Errorf
-	Fatal Fatalf
-	Log Logf
-	Panic Panicf Panicln
-The -printfuncs flag can be used to redefine this list.
-If the function name ends with an 'f', the function is assumed to take
-a format descriptor string in the manner of fmt.Printf. If not, vet
-complains about arguments that look like format descriptor strings.
-
-It also checks for errors such as using a Writer as the first argument of
-Printf.
-
-Methods
-
-Flag: -methods
-
-Non-standard signatures for methods with familiar names, including:
-	Format GobEncode GobDecode MarshalJSON MarshalXML
-	Peek ReadByte ReadFrom ReadRune Scan Seek
-	UnmarshalJSON UnreadByte UnreadRune WriteByte
-	WriteTo
-
-Struct tags
-
-Flag: -structtags
-
-Struct tags that do not follow the format understood by reflect.StructTag.Get.
-Well-known encoding struct tags (json, xml) used with unexported fields.
-
-Unkeyed composite literals
-
-Flag: -composites
-
-Composite struct literals that do not use the field-keyed syntax.
 
 Assembly declarations
 
@@ -111,11 +66,49 @@ Flag: -buildtags
 
 Badly formed or misplaced +build tags.
 
+Invalid uses of cgo
+
+Flag: -cgocall
+
+Detect some violations of the cgo pointer passing rules.
+
+Unkeyed composite literals
+
+Flag: -composites
+
+Composite struct literals that do not use the field-keyed syntax.
+
 Copying locks
 
 Flag: -copylocks
 
 Locks that are erroneously passed by value.
+
+Tests, benchmarks and documentation examples
+
+Flag: -tests
+
+Mistakes involving tests including functions with incorrect names or signatures
+and example tests that document identifiers not in the package.
+
+Failure to call the cancelation function returned by context.WithCancel.
+
+Flag: -lostcancel
+
+The cancelation function returned by context.WithCancel, WithTimeout,
+and WithDeadline must be called or the new context will remain live
+until its parent context is cancelled.
+(The background context is never cancelled.)
+
+Methods
+
+Flag: -methods
+
+Non-standard signatures for methods with familiar names, including:
+	Format GobEncode GobDecode MarshalJSON MarshalXML
+	Peek ReadByte ReadFrom ReadRune Scan Seek
+	UnmarshalJSON UnreadByte UnreadRune WriteByte
+	WriteTo
 
 Nil function comparison
 
@@ -123,23 +116,59 @@ Flag: -nilfunc
 
 Comparisons between functions and nil.
 
+Printf family
+
+Flag: -printf
+
+Suspicious calls to functions in the Printf family, including any functions
+with these names, disregarding case:
+	Print Printf Println
+	Fprint Fprintf Fprintln
+	Sprint Sprintf Sprintln
+	Error Errorf
+	Fatal Fatalf
+	Log Logf
+	Panic Panicf Panicln
+The -printfuncs flag can be used to redefine this list.
+If the function name ends with an 'f', the function is assumed to take
+a format descriptor string in the manner of fmt.Printf. If not, vet
+complains about arguments that look like format descriptor strings.
+
+It also checks for errors such as using a Writer as the first argument of
+Printf.
+
+Struct tags
+
 Range loop variables
 
 Flag: -rangeloops
 
 Incorrect uses of range loop variables in closures.
 
-Unreachable code
-
-Flag: -unreachable
-
-Unreachable code.
-
 Shadowed variables
 
 Flag: -shadow=false (experimental; must be set explicitly)
 
 Variables that may have been unintentionally shadowed.
+
+Shifts
+
+Flag: -shift
+
+Shifts equal to or longer than the variable's length.
+
+Struct tags
+
+Flag: -structtags
+
+Struct tags that do not follow the format understood by reflect.StructTag.Get.
+Well-known encoding struct tags (json, xml) used with unexported fields.
+
+Unreachable code
+
+Flag: -unreachable
+
+Unreachable code.
 
 Misuse of unsafe Pointers
 
@@ -160,32 +189,19 @@ discarded.  By default, this includes functions like fmt.Errorf and
 fmt.Sprintf and methods like String and Error. The flags -unusedfuncs
 and -unusedstringmethods control the set.
 
-Shifts
-
-Flag: -shift
-
-Shifts equal to or longer than the variable's length.
-
 Other flags
 
 These flags configure the behavior of vet:
 
 	-all (default true)
-		Check everything; disabled if any explicit check is requested.
+		Enable all non-experimental checks.
 	-v
 		Verbose mode
 	-printfuncs
-		A comma-separated list of print-like functions to supplement the
-		standard list.  Each entry is in the form Name:N where N is the
-		zero-based argument position of the first argument involved in the
-		print: either the format or the first print argument for non-formatted
-		prints.  For example, if you have Warn and Warnf functions that
-		take an io.Writer as their first argument, like Fprintf,
-			-printfuncs=Warn:1,Warnf:1
+		A comma-separated list of print-like function names
+		to supplement the standard list.
 		For more information, see the discussion of the -printf flag.
 	-shadowstrict
 		Whether to be strict about shadowing; can be noisy.
-	-test
-		For testing only: sets -all and -shadow.
 */
-package main // import "golang.org/x/tools/cmd/vet"
+package main

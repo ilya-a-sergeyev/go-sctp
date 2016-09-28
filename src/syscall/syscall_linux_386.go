@@ -9,9 +9,10 @@ package syscall
 
 import "unsafe"
 
-const _SYS_dup = SYS_DUP2
-
-func Getpagesize() int { return 4096 }
+const (
+	_SYS_dup      = SYS_DUP2
+	_SYS_getdents = SYS_GETDENTS64
+)
 
 func TimespecToNsec(ts Timespec) int64 { return int64(ts.Sec)*1e9 + int64(ts.Nsec) }
 
@@ -179,9 +180,9 @@ func Seek(fd int, offset int64, whence int) (newoffset int64, err error) {
 
 // On x86 Linux, all the socket calls go through an extra indirection,
 // I think because the 5-register system call interface can't handle
-// the 6-argument calls like sendto and recvfrom.  Instead the
+// the 6-argument calls like sendto and recvfrom. Instead the
 // arguments to the underlying system call are the number below
-// and a pointer to an array of uintptr.  We hide the pointer in the
+// and a pointer to an array of uintptr. We hide the pointer in the
 // socketcall assembly to avoid allocation on every system call.
 
 const (

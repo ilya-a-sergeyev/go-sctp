@@ -1,10 +1,12 @@
-// Copyright 2015 The Go Authors.  All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 // Issue 10303. Pointers passed to C were not marked as escaping (bug in cgo).
 
 package cgotest
+
+import "runtime"
 
 /*
 typedef int *intptr;
@@ -39,6 +41,10 @@ import (
 )
 
 func test10303(t *testing.T, n int) {
+	if runtime.Compiler == "gccgo" {
+		t.Skip("gccgo permits C pointers on the stack")
+	}
+
 	// Run at a few different stack depths just to avoid an unlucky pass
 	// due to variables ending up on different pages.
 	if n > 0 {

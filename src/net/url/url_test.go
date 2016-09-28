@@ -6,6 +6,8 @@ package url
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -69,6 +71,28 @@ var urltests = []URLTest{
 			Path:   "/",
 		},
 		"ftp://john%20doe@www.google.com/",
+	},
+	// empty query
+	{
+		"http://www.google.com/?",
+		&URL{
+			Scheme:     "http",
+			Host:       "www.google.com",
+			Path:       "/",
+			ForceQuery: true,
+		},
+		"",
+	},
+	// query ending in question mark (Issue 14573)
+	{
+		"http://www.google.com/?foo=bar?",
+		&URL{
+			Scheme:   "http",
+			Host:     "www.google.com",
+			Path:     "/",
+			RawQuery: "foo=bar?",
+		},
+		"",
 	},
 	// query
 	{
@@ -330,7 +354,7 @@ var urltests = []URLTest{
 		},
 		"",
 	},
-	// host subcomponent; IPv6 address with zone identifier in RFC 6847
+	// host subcomponent; IPv6 address with zone identifier in RFC 6874
 	{
 		"http://[fe80::1%25en0]/", // alphanum zone identifier
 		&URL{
@@ -340,7 +364,7 @@ var urltests = []URLTest{
 		},
 		"",
 	},
-	// host and port subcomponents; IPv6 address with zone identifier in RFC 6847
+	// host and port subcomponents; IPv6 address with zone identifier in RFC 6874
 	{
 		"http://[fe80::1%25en0]:8080/", // alphanum zone identifier
 		&URL{
@@ -350,7 +374,7 @@ var urltests = []URLTest{
 		},
 		"",
 	},
-	// host subcomponent; IPv6 address with zone identifier in RFC 6847
+	// host subcomponent; IPv6 address with zone identifier in RFC 6874
 	{
 		"http://[fe80::1%25%65%6e%301-._~]/", // percent-encoded+unreserved zone identifier
 		&URL{
@@ -360,7 +384,7 @@ var urltests = []URLTest{
 		},
 		"http://[fe80::1%25en01-._~]/",
 	},
-	// host and port subcomponents; IPv6 address with zone identifier in RFC 6847
+	// host and port subcomponents; IPv6 address with zone identifier in RFC 6874
 	{
 		"http://[fe80::1%25%65%6e%301-._~]:8080/", // percent-encoded+unreserved zone identifier
 		&URL{
@@ -424,6 +448,122 @@ var urltests = []URLTest{
 		},
 		"",
 	},
+	// golang.org/issue/12200 (colon with empty port)
+	{
+		"http://192.168.0.2:8080/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "192.168.0.2:8080",
+			Path:   "/foo",
+		},
+		"",
+	},
+	{
+		"http://192.168.0.2:/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "192.168.0.2:",
+			Path:   "/foo",
+		},
+		"",
+	},
+	{
+		// Malformed IPv6 but still accepted.
+		"http://2b01:e34:ef40:7730:8e70:5aff:fefe:edac:8080/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "2b01:e34:ef40:7730:8e70:5aff:fefe:edac:8080",
+			Path:   "/foo",
+		},
+		"",
+	},
+	{
+		// Malformed IPv6 but still accepted.
+		"http://2b01:e34:ef40:7730:8e70:5aff:fefe:edac:/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "2b01:e34:ef40:7730:8e70:5aff:fefe:edac:",
+			Path:   "/foo",
+		},
+		"",
+	},
+	{
+		"http://[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:8080/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:8080",
+			Path:   "/foo",
+		},
+		"",
+	},
+	{
+		"http://[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:",
+			Path:   "/foo",
+		},
+		"",
+	},
+	// golang.org/issue/7991 and golang.org/issue/12719 (non-ascii %-encoded in host)
+	{
+		"http://hello.世界.com/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "hello.世界.com",
+			Path:   "/foo",
+		},
+		"http://hello.%E4%B8%96%E7%95%8C.com/foo",
+	},
+	{
+		"http://hello.%e4%b8%96%e7%95%8c.com/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "hello.世界.com",
+			Path:   "/foo",
+		},
+		"http://hello.%E4%B8%96%E7%95%8C.com/foo",
+	},
+	{
+		"http://hello.%E4%B8%96%E7%95%8C.com/foo",
+		&URL{
+			Scheme: "http",
+			Host:   "hello.世界.com",
+			Path:   "/foo",
+		},
+		"",
+	},
+	// golang.org/issue/10433 (path beginning with //)
+	{
+		"http://example.com//foo",
+		&URL{
+			Scheme: "http",
+			Host:   "example.com",
+			Path:   "//foo",
+		},
+		"",
+	},
+	// test that we can reparse the host names we accept.
+	{
+		"myscheme://authority<\"hi\">/foo",
+		&URL{
+			Scheme: "myscheme",
+			Host:   "authority<\"hi\">",
+			Path:   "/foo",
+		},
+		"",
+	},
+	// spaces in hosts are disallowed but escaped spaces in IPv6 scope IDs are grudgingly OK.
+	// This happens on Windows.
+	// golang.org/issue/14002
+	{
+		"tcp://[2020::2020:20:2020:2020%25Windows%20Loves%20Spaces]:2020",
+		&URL{
+			Scheme: "tcp",
+			Host:   "[2020::2020:20:2020:2020%Windows Loves Spaces]:2020",
+		},
+		"",
+	},
 }
 
 // more useful string for debugging than fmt's struct printer
@@ -435,22 +575,8 @@ func ufmt(u *URL) string {
 			pass = p
 		}
 	}
-	return fmt.Sprintf("opaque=%q, scheme=%q, user=%#v, pass=%#v, host=%q, path=%q, rawpath=%q, rawq=%q, frag=%q",
-		u.Opaque, u.Scheme, user, pass, u.Host, u.Path, u.RawPath, u.RawQuery, u.Fragment)
-}
-
-func DoTest(t *testing.T, parse func(string) (*URL, error), name string, tests []URLTest) {
-	for _, tt := range tests {
-		u, err := parse(tt.in)
-		if err != nil {
-			t.Errorf("%s(%q) returned error %s", name, tt.in, err)
-			continue
-		}
-		if !reflect.DeepEqual(u, tt.out) {
-			t.Errorf("%s(%q):\n\thave %v\n\twant %v\n",
-				name, tt.in, ufmt(u), ufmt(tt.out))
-		}
-	}
+	return fmt.Sprintf("opaque=%q, scheme=%q, user=%#v, pass=%#v, host=%q, path=%q, rawpath=%q, rawq=%q, frag=%q, forcequery=%v",
+		u.Opaque, u.Scheme, user, pass, u.Host, u.Path, u.RawPath, u.RawQuery, u.Fragment, u.ForceQuery)
 }
 
 func BenchmarkString(b *testing.B) {
@@ -471,14 +597,23 @@ func BenchmarkString(b *testing.B) {
 			g = u.String()
 		}
 		b.StopTimer()
-		if w := tt.roundtrip; g != w {
+		if w := tt.roundtrip; b.N > 0 && g != w {
 			b.Errorf("Parse(%q).String() == %q, want %q", tt.in, g, w)
 		}
 	}
 }
 
 func TestParse(t *testing.T) {
-	DoTest(t, Parse, "Parse", urltests)
+	for _, tt := range urltests {
+		u, err := Parse(tt.in)
+		if err != nil {
+			t.Errorf("Parse(%q) returned error %v", tt.in, err)
+			continue
+		}
+		if !reflect.DeepEqual(u, tt.out) {
+			t.Errorf("Parse(%q):\n\tgot  %v\n\twant %v\n", tt.in, ufmt(u), ufmt(tt.out))
+		}
+	}
 }
 
 const pathThatLooksSchemeRelative = "//not.a.user@not.a.host/just/a/path"
@@ -525,9 +660,10 @@ var parseRequestURLTests = []struct {
 func TestParseRequestURI(t *testing.T) {
 	for _, test := range parseRequestURLTests {
 		_, err := ParseRequestURI(test.url)
-		valid := err == nil
-		if valid != test.expectedValid {
-			t.Errorf("Expected valid=%v for %q; got %v", test.expectedValid, test.url, valid)
+		if test.expectedValid && err != nil {
+			t.Errorf("ParseRequestURI(%q) gave err %v; want no error", test.url, err)
+		} else if !test.expectedValid && err == nil {
+			t.Errorf("ParseRequestURI(%q) gave nil error; want some error", test.url)
 		}
 	}
 
@@ -536,45 +672,69 @@ func TestParseRequestURI(t *testing.T) {
 		t.Fatalf("Unexpected error %v", err)
 	}
 	if url.Path != pathThatLooksSchemeRelative {
-		t.Errorf("Expected path %q; got %q", pathThatLooksSchemeRelative, url.Path)
+		t.Errorf("ParseRequestURI path:\ngot  %q\nwant %q", url.Path, pathThatLooksSchemeRelative)
 	}
 }
 
-func DoTestString(t *testing.T, parse func(string) (*URL, error), name string, tests []URLTest) {
-	for _, tt := range tests {
-		u, err := parse(tt.in)
-		if err != nil {
-			t.Errorf("%s(%q) returned error %s", name, tt.in, err)
-			continue
-		}
-		expected := tt.in
-		if len(tt.roundtrip) > 0 {
-			expected = tt.roundtrip
-		}
-		s := u.String()
-		if s != expected {
-			t.Errorf("%s(%q).String() == %q (expected %q)", name, tt.in, s, expected)
-		}
-	}
-}
-
-func TestURLString(t *testing.T) {
-	DoTestString(t, Parse, "Parse", urltests)
-
-	// no leading slash on path should prepend
-	// slash on String() call
-	noslash := URLTest{
-		"http://www.google.com/search",
-		&URL{
+var stringURLTests = []struct {
+	url  URL
+	want string
+}{
+	// No leading slash on path should prepend slash on String() call
+	{
+		url: URL{
 			Scheme: "http",
 			Host:   "www.google.com",
 			Path:   "search",
 		},
-		"",
+		want: "http://www.google.com/search",
+	},
+	// Relative path with first element containing ":" should be prepended with "./", golang.org/issue/17184
+	{
+		url: URL{
+			Path: "this:that",
+		},
+		want: "./this:that",
+	},
+	// Relative path with second element containing ":" should not be prepended with "./"
+	{
+		url: URL{
+			Path: "here/this:that",
+		},
+		want: "here/this:that",
+	},
+	// Non-relative path with first element containing ":" should not be prepended with "./"
+	{
+		url: URL{
+			Scheme: "http",
+			Host:   "www.google.com",
+			Path:   "this:that",
+		},
+		want: "http://www.google.com/this:that",
+	},
+}
+
+func TestURLString(t *testing.T) {
+	for _, tt := range urltests {
+		u, err := Parse(tt.in)
+		if err != nil {
+			t.Errorf("Parse(%q) returned error %s", tt.in, err)
+			continue
+		}
+		expected := tt.in
+		if tt.roundtrip != "" {
+			expected = tt.roundtrip
+		}
+		s := u.String()
+		if s != expected {
+			t.Errorf("Parse(%q).String() == %q (expected %q)", tt.in, s, expected)
+		}
 	}
-	s := noslash.out.String()
-	if s != noslash.in {
-		t.Errorf("Expected %s; go %s", noslash.in, s)
+
+	for _, tt := range stringURLTests {
+		if got := tt.url.String(); got != tt.want {
+			t.Errorf("%+v.String() = %q; want %q", tt.url, got, tt.want)
+		}
 	}
 }
 
@@ -756,11 +916,13 @@ var resolveReferenceTests = []struct {
 	// Absolute URL references
 	{"http://foo.com?a=b", "https://bar.com/", "https://bar.com/"},
 	{"http://foo.com/", "https://bar.com/?a=b", "https://bar.com/?a=b"},
+	{"http://foo.com/", "https://bar.com/?", "https://bar.com/?"},
 	{"http://foo.com/bar", "mailto:foo@example.com", "mailto:foo@example.com"},
 
 	// Path-absolute references
 	{"http://foo.com/bar", "/baz", "http://foo.com/baz"},
 	{"http://foo.com/bar?a=b#f", "/baz", "http://foo.com/baz"},
+	{"http://foo.com/bar?a=b", "/baz?", "http://foo.com/baz?"},
 	{"http://foo.com/bar?a=b", "/baz?c=d", "http://foo.com/baz?c=d"},
 
 	// Scheme-relative
@@ -802,6 +964,15 @@ var resolveReferenceTests = []struct {
 
 	// Fragment
 	{"http://foo.com/bar", ".#frag", "http://foo.com/#frag"},
+
+	// Paths with escaping (issue 16947).
+	{"http://foo.com/foo%2fbar/", "../baz", "http://foo.com/baz"},
+	{"http://foo.com/1/2%2f/3%2f4/5", "../../a/b/c", "http://foo.com/1/a/b/c"},
+	{"http://foo.com/1/2/3", "./a%2f../../b/..%2fc", "http://foo.com/1/2/b/..%2fc"},
+	{"http://foo.com/1/2%2f/3%2f4/5", "./a%2f../b/../c", "http://foo.com/1/2%2f/3%2f4/a%2f../c"},
+	{"http://foo.com/foo%20bar/", "../baz", "http://foo.com/baz"},
+	{"http://foo.com/foo", "../bar%2fbaz", "http://foo.com/bar%2fbaz"},
+	{"http://foo.com/foo%2dbar/", "./baz-quux", "http://foo.com/foo%2dbar/baz-quux"},
 
 	// RFC 3986: Normal Examples
 	// http://tools.ietf.org/html/rfc3986#section-5.4.1
@@ -862,7 +1033,7 @@ func TestResolveReference(t *testing.T) {
 	mustParse := func(url string) *URL {
 		u, err := Parse(url)
 		if err != nil {
-			t.Fatalf("Expected URL to parse: %q, got error: %v", url, err)
+			t.Fatalf("Parse(%q) got err %v", url, err)
 		}
 		return u
 	}
@@ -871,8 +1042,8 @@ func TestResolveReference(t *testing.T) {
 		base := mustParse(test.base)
 		rel := mustParse(test.rel)
 		url := base.ResolveReference(rel)
-		if url.String() != test.expected {
-			t.Errorf("URL(%q).ResolveReference(%q) == %q, got %q", test.base, test.rel, test.expected, url.String())
+		if got := url.String(); got != test.expected {
+			t.Errorf("URL(%q).ResolveReference(%q)\ngot  %q\nwant %q", test.base, test.rel, got, test.expected)
 		}
 		// Ensure that new instances are returned.
 		if base == url {
@@ -882,8 +1053,8 @@ func TestResolveReference(t *testing.T) {
 		url, err := base.Parse(test.rel)
 		if err != nil {
 			t.Errorf("URL(%q).Parse(%q) failed: %v", test.base, test.rel, err)
-		} else if url.String() != test.expected {
-			t.Errorf("URL(%q).Parse(%q) == %q, got %q", test.base, test.rel, test.expected, url.String())
+		} else if got := url.String(); got != test.expected {
+			t.Errorf("URL(%q).Parse(%q)\ngot  %q\nwant %q", test.base, test.rel, got, test.expected)
 		} else if base == url {
 			// Ensure that new instances are returned for the wrapper too.
 			t.Errorf("Expected URL.Parse to return new URL instance.")
@@ -891,14 +1062,14 @@ func TestResolveReference(t *testing.T) {
 		// Ensure Opaque resets the URL.
 		url = base.ResolveReference(opaque)
 		if *url != *opaque {
-			t.Errorf("ResolveReference failed to resolve opaque URL: want %#v, got %#v", url, opaque)
+			t.Errorf("ResolveReference failed to resolve opaque URL:\ngot  %#v\nwant %#v", url, opaque)
 		}
 		// Test the convenience wrapper with an opaque URL too.
 		url, err = base.Parse("scheme:opaque")
 		if err != nil {
 			t.Errorf(`URL(%q).Parse("scheme:opaque") failed: %v`, test.base, err)
 		} else if *url != *opaque {
-			t.Errorf("Parse failed to resolve opaque URL: want %#v, got %#v", url, opaque)
+			t.Errorf("Parse failed to resolve opaque URL:\ngot  %#v\nwant %#v", opaque, url)
 		} else if base == url {
 			// Ensure that new instances are returned, again.
 			t.Errorf("Expected URL.Parse to return new URL instance.")
@@ -1091,6 +1262,23 @@ var requritests = []RequestURITest{
 		},
 		"opaque?q=go+language",
 	},
+	{
+		&URL{
+			Scheme: "http",
+			Host:   "example.com",
+			Path:   "//foo",
+		},
+		"//foo",
+	},
+	{
+		&URL{
+			Scheme:     "http",
+			Host:       "example.com",
+			Path:       "/foo",
+			ForceQuery: true,
+		},
+		"/foo?",
+	},
 }
 
 func TestRequestURI(t *testing.T) {
@@ -1124,16 +1312,17 @@ func TestParseAuthority(t *testing.T) {
 		{"http://[::1]a", true},
 		{"http://[::1]%23", true},
 		{"http://[::1%25en0]", false},     // valid zone id
-		{"http://[::1]:", true},           // colon, but no port
-		{"http://[::1]:%38%30", true},     // no hex in port
-		{"http://[::1%25%10]", false},     // TODO: reject the %10 after the valid zone %25 separator?
+		{"http://[::1]:", false},          // colon, but no port OK
+		{"http://[::1]:%38%30", true},     // not allowed: % encoding only for non-ASCII
+		{"http://[::1%25%41]", false},     // RFC 6874 allows over-escaping in zone
 		{"http://[%10::1]", true},         // no %xx escapes in IP address
 		{"http://[::1]/%48", false},       // %xx in path is fine
-		{"http://%41:8080/", true},        // TODO: arguably we should accept reg-name with %xx
+		{"http://%41:8080/", true},        // not allowed: % encoding only for non-ASCII
 		{"mysql://x@y(z:123)/foo", false}, // golang.org/issue/12023
 		{"mysql://x@y(1.2.3.4:123)/foo", false},
 		{"mysql://x@y([2001:db8::1]:123)/foo", false},
 		{"http://[]%20%48%54%54%50%2f%31%2e%31%0a%4d%79%48%65%61%64%65%72%3a%20%31%32%33%0a%0a/", true}, // golang.org/issue/11208
+		{"http://a b.com/", true},                                                                       // no space in host name please
 	}
 	for _, tt := range tests {
 		u, err := Parse(tt.in)
@@ -1226,6 +1415,131 @@ func TestShouldEscape(t *testing.T) {
 	for _, tt := range shouldEscapeTests {
 		if shouldEscape(tt.in, tt.mode) != tt.escape {
 			t.Errorf("shouldEscape(%q, %v) returned %v; expected %v", tt.in, tt.mode, !tt.escape, tt.escape)
+		}
+	}
+}
+
+type timeoutError struct {
+	timeout bool
+}
+
+func (e *timeoutError) Error() string { return "timeout error" }
+func (e *timeoutError) Timeout() bool { return e.timeout }
+
+type temporaryError struct {
+	temporary bool
+}
+
+func (e *temporaryError) Error() string   { return "temporary error" }
+func (e *temporaryError) Temporary() bool { return e.temporary }
+
+type timeoutTemporaryError struct {
+	timeoutError
+	temporaryError
+}
+
+func (e *timeoutTemporaryError) Error() string { return "timeout/temporary error" }
+
+var netErrorTests = []struct {
+	err       error
+	timeout   bool
+	temporary bool
+}{{
+	err:       &Error{"Get", "http://google.com/", &timeoutError{timeout: true}},
+	timeout:   true,
+	temporary: false,
+}, {
+	err:       &Error{"Get", "http://google.com/", &timeoutError{timeout: false}},
+	timeout:   false,
+	temporary: false,
+}, {
+	err:       &Error{"Get", "http://google.com/", &temporaryError{temporary: true}},
+	timeout:   false,
+	temporary: true,
+}, {
+	err:       &Error{"Get", "http://google.com/", &temporaryError{temporary: false}},
+	timeout:   false,
+	temporary: false,
+}, {
+	err:       &Error{"Get", "http://google.com/", &timeoutTemporaryError{timeoutError{timeout: true}, temporaryError{temporary: true}}},
+	timeout:   true,
+	temporary: true,
+}, {
+	err:       &Error{"Get", "http://google.com/", &timeoutTemporaryError{timeoutError{timeout: false}, temporaryError{temporary: true}}},
+	timeout:   false,
+	temporary: true,
+}, {
+	err:       &Error{"Get", "http://google.com/", &timeoutTemporaryError{timeoutError{timeout: true}, temporaryError{temporary: false}}},
+	timeout:   true,
+	temporary: false,
+}, {
+	err:       &Error{"Get", "http://google.com/", &timeoutTemporaryError{timeoutError{timeout: false}, temporaryError{temporary: false}}},
+	timeout:   false,
+	temporary: false,
+}, {
+	err:       &Error{"Get", "http://google.com/", io.EOF},
+	timeout:   false,
+	temporary: false,
+}}
+
+// Test that url.Error implements net.Error and that it forwards
+func TestURLErrorImplementsNetError(t *testing.T) {
+	for i, tt := range netErrorTests {
+		err, ok := tt.err.(net.Error)
+		if !ok {
+			t.Errorf("%d: %T does not implement net.Error", i+1, tt.err)
+			continue
+		}
+		if err.Timeout() != tt.timeout {
+			t.Errorf("%d: err.Timeout(): got %v, want %v", i+1, err.Timeout(), tt.timeout)
+			continue
+		}
+		if err.Temporary() != tt.temporary {
+			t.Errorf("%d: err.Temporary(): got %v, want %v", i+1, err.Temporary(), tt.temporary)
+		}
+	}
+}
+
+func TestURLHostname(t *testing.T) {
+	tests := []struct {
+		host string // URL.Host field
+		want string
+	}{
+		{"foo.com:80", "foo.com"},
+		{"foo.com", "foo.com"},
+		{"FOO.COM", "FOO.COM"}, // no canonicalization (yet?)
+		{"1.2.3.4", "1.2.3.4"},
+		{"1.2.3.4:80", "1.2.3.4"},
+		{"[1:2:3:4]", "1:2:3:4"},
+		{"[1:2:3:4]:80", "1:2:3:4"},
+		{"[::1]:80", "::1"},
+	}
+	for _, tt := range tests {
+		u := &URL{Host: tt.host}
+		got := u.Hostname()
+		if got != tt.want {
+			t.Errorf("Hostname for Host %q = %q; want %q", tt.host, got, tt.want)
+		}
+	}
+}
+
+func TestURLPort(t *testing.T) {
+	tests := []struct {
+		host string // URL.Host field
+		want string
+	}{
+		{"foo.com", ""},
+		{"foo.com:80", "80"},
+		{"1.2.3.4", ""},
+		{"1.2.3.4:80", "80"},
+		{"[1:2:3:4]", ""},
+		{"[1:2:3:4]:80", "80"},
+	}
+	for _, tt := range tests {
+		u := &URL{Host: tt.host}
+		got := u.Port()
+		if got != tt.want {
+			t.Errorf("Port for Host %q = %q; want %q", tt.host, got, tt.want)
 		}
 	}
 }

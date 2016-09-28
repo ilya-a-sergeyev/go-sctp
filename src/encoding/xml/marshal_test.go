@@ -139,6 +139,7 @@ type EmbedA struct {
 	EmbedC
 	EmbedB EmbedB
 	FieldA string
+	embedD
 }
 
 type EmbedB struct {
@@ -151,6 +152,11 @@ type EmbedC struct {
 	FieldA2 string `xml:"FieldA>A2"`
 	FieldB  string
 	FieldC  string
+}
+
+type embedD struct {
+	fieldD string
+	FieldE string // Promoted and visible when embedD is embedded.
 }
 
 type NameCasing struct {
@@ -311,6 +317,10 @@ func (m *MyMarshalerAttrTest) MarshalXMLAttr(name Name) (Attr, error) {
 	return Attr{name, "hello world"}, nil
 }
 
+func (m *MyMarshalerAttrTest) UnmarshalXMLAttr(attr Attr) error {
+	return nil
+}
+
 type MarshalerStruct struct {
 	Foo MyMarshalerAttrTest `xml:",attr"`
 }
@@ -348,6 +358,15 @@ type NestedAndChardata struct {
 type NestedAndComment struct {
 	AB      []string `xml:"A>B"`
 	Comment string   `xml:",comment"`
+}
+
+type CDataTest struct {
+	Chardata string `xml:",cdata"`
+}
+
+type NestedAndCData struct {
+	AB    []string `xml:"A>B"`
+	CDATA string   `xml:",cdata"`
 }
 
 func ifaceptr(x interface{}) interface{} {
@@ -711,6 +730,9 @@ var marshalTests = []struct {
 				},
 			},
 			FieldA: "A.A",
+			embedD: embedD{
+				FieldE: "A.D.E",
+			},
 		},
 		ExpectXML: `<EmbedA>` +
 			`<FieldB>A.C.B</FieldB>` +
@@ -724,6 +746,7 @@ var marshalTests = []struct {
 			`<FieldC>A.B.C.C</FieldC>` +
 			`</EmbedB>` +
 			`<FieldA>A.A</FieldA>` +
+			`<FieldE>A.D.E</FieldE>` +
 			`</EmbedA>`,
 	},
 
@@ -968,6 +991,42 @@ var marshalTests = []struct {
 			MyInt: 42,
 		},
 	},
+	// Test outputting CDATA-wrapped text.
+	{
+		ExpectXML: `<CDataTest></CDataTest>`,
+		Value:     &CDataTest{},
+	},
+	{
+		ExpectXML: `<CDataTest><![CDATA[http://example.com/tests/1?foo=1&bar=baz]]></CDataTest>`,
+		Value: &CDataTest{
+			Chardata: "http://example.com/tests/1?foo=1&bar=baz",
+		},
+	},
+	{
+		ExpectXML: `<CDataTest><![CDATA[Literal <![CDATA[Nested]]]]><![CDATA[>!]]></CDataTest>`,
+		Value: &CDataTest{
+			Chardata: "Literal <![CDATA[Nested]]>!",
+		},
+	},
+	{
+		ExpectXML: `<CDataTest><![CDATA[<![CDATA[Nested]]]]><![CDATA[> Literal!]]></CDataTest>`,
+		Value: &CDataTest{
+			Chardata: "<![CDATA[Nested]]> Literal!",
+		},
+	},
+	{
+		ExpectXML: `<CDataTest><![CDATA[<![CDATA[Nested]]]]><![CDATA[> Literal! <![CDATA[Nested]]]]><![CDATA[> Literal!]]></CDataTest>`,
+		Value: &CDataTest{
+			Chardata: "<![CDATA[Nested]]> Literal! <![CDATA[Nested]]> Literal!",
+		},
+	},
+	{
+		ExpectXML: `<CDataTest><![CDATA[<![CDATA[<![CDATA[Nested]]]]><![CDATA[>]]]]><![CDATA[>]]></CDataTest>`,
+		Value: &CDataTest{
+			Chardata: "<![CDATA[<![CDATA[Nested]]>]]>",
+		},
+	},
+
 	// Test omitempty with parent chain; see golang.org/issue/4168.
 	{
 		ExpectXML: `<Strings><A></A></Strings>`,
@@ -1005,6 +1064,10 @@ var marshalTests = []struct {
 	{
 		ExpectXML: `<NestedAndComment><A><B></B><B></B></A><!--test--></NestedAndComment>`,
 		Value:     &NestedAndComment{AB: make([]string, 2), Comment: "test"},
+	},
+	{
+		ExpectXML: `<NestedAndCData><A><B></B><B></B></A><![CDATA[test]]></NestedAndCData>`,
+		Value:     &NestedAndCData{AB: make([]string, 2), CDATA: "test"},
 	},
 }
 
@@ -1673,7 +1736,7 @@ func TestDecodeEncode(t *testing.T) {
 	in.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <?Target Instruction?>
 <root>
-</root>	
+</root>
 `)
 	dec := NewDecoder(&in)
 	enc := NewEncoder(&out)
@@ -1695,7 +1758,7 @@ func TestRace9796(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {
-			Marshal(B{[]A{A{}}})
+			Marshal(B{[]A{{}}})
 			wg.Done()
 		}()
 	}
@@ -1762,5 +1825,16 @@ func TestSimpleUseOfEncodeToken(t *testing.T) {
 	want := "<object2></object2>"
 	if buf.String() != want {
 		t.Errorf("enc.EncodeToken: expected %q; got %q", want, buf.String())
+	}
+}
+
+// Issue 16158. Decoder.unmarshalAttr ignores the return value of copyValue.
+func TestIssue16158(t *testing.T) {
+	const data = `<foo b="HELLOWORLD"></foo>`
+	err := Unmarshal([]byte(data), &struct {
+		B byte `xml:"b,attr,omitempty"`
+	}{})
+	if err == nil {
+		t.Errorf("Unmarshal: expected error, got nil")
 	}
 }
