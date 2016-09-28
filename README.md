@@ -63,11 +63,12 @@ These commands are based on the instructions [here](https://golang.org/doc/insta
 The [SCTP examples repository](https://github.com/cyberroadie/sctp-examples) contains working examples 
 and instructions to test SCTP. It has TCP examples to compare with.
 
-## Questions
-Any questions drop me an email [ovanac01 at mail.bbk.ac.uk] or tweet #cyberroadie
+## Have fun!
+Any questions drop me an email 'ovanac01 at mail.bbk.ac.uk' or tweet #cyberroadie
 
-Have fun! [Olivier Van Acker]
+Olivier Van Acker
 
+### Below this line is the official Go README documentation 
 
 
 # The Go Programming Language
