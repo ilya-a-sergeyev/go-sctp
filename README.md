@@ -1,6 +1,16 @@
 # SCTP in Go
 
 This branch has [SCTP](https://en.wikipedia.org/wiki/Stream_Control_Transmission_Protocol) functionality added to the network library.
+I will try and keep this branch up to date with the master branch of the [official Go repository](https://github.com/golang/go)
+
+## Go wild!
+Needless to so say, SCTP in Go is experimental and should be used with caution.  
+
+## Supported platforms 
+For now this will only work on [FreeBSD](https://www.freebsd.org/) and [macOS/OSX](http://www.apple.com/uk/macos/sierra). 
+
+FreeBSD comes with natiive support. On Mac OSX follow the instructions in the 
+[official SCTP repository](https://github.com/sctplab/SCTP_NKE_ElCapitan) to install the driver.
 
 Example server:
 
@@ -39,6 +49,26 @@ func main() {
 
 }
 ```
+
+## Build instructions for SCTP in Go
+These commands are based on the instructions [here](https://golang.org/doc/install/source).
+
+	$ git clone https://github.com/cyberroadie/go-sctp
+	$ cd go-sctp
+	$ git checkout go-sctp
+	$ cd src
+	$ ./all.bash
+
+## Test SCTP in Go
+The [SCTP examples repository](https://github.com/cyberroadie/sctp-examples) contains working examples 
+and instructions to test SCTP. It has TCP examples to compare with.
+
+## Questions
+Any questions drop me an email [ovanac01 at mail.bbk.ac.uk] or tweet #cyberroadie
+
+Have fun! [Olivier Van Acker]
+
+
 
 # The Go Programming Language
 
