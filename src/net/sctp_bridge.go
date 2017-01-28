@@ -4,8 +4,6 @@
 package net
 
 /*
-#cgo CFLAGS: -I/usr/lib/libsctp.dylib
-#cgo LDFLAGS: -L. -lsctp
 #include <netinet/sctp.h>
 #include <netinet/sctp_uio.h>
 

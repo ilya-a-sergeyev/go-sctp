@@ -79,6 +79,7 @@ includes_FreeBSD='
 #include <termios.h>
 #include <netinet/ip.h>
 #include <netinet/ip_mroute.h>
+#include <netinet/sctp.h>
 
 #if __FreeBSD__ >= 10
 #define IFT_CARP	0xf8	// IFT_CARP is deprecated in FreeBSD 10

@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-// +build darwin
+// +build darwin freebsd
 
 type SCTPConn struct {
 	conn

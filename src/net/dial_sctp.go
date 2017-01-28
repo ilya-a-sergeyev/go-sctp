@@ -1,4 +1,4 @@
-// +build darwin
+// +build darwin freebsd
 package net
 
 func ListenPacket(net, laddr string) (PacketConn, error) {

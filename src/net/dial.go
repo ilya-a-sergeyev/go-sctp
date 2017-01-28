@@ -553,32 +553,6 @@ func Listen(net, laddr string) (Listener, error) {
 	return l, nil
 }
 
-// ListenPacket announces on the local network address laddr.
-// The network net must be a packet-oriented network: "udp", "udp4",
-// "udp6", "ip", "ip4", "ip6" or "unixgram".
-// For TCP and UDP, the syntax of laddr is "host:port", like "127.0.0.1:8080".
-// If host is omitted, as in ":8080", ListenPacket listens on all available interfaces
-// instead of just the interface with the given host address.
-// See Dial for the syntax of laddr.
-func ListenPacket(net, laddr string) (PacketConn, error) {
-	addrs, err := DefaultResolver.resolveAddrList(context.Background(), "listen", net, laddr, nil)
-	if err != nil {
-		return nil, err
-	}
-	if op == "dial" && addr == "" {
-		return nil, errMissingAddress
-	}
-	switch afnet {
-	case "unix", "unixgram", "unixpacket":
-		addr, err := ResolveUnixAddr(afnet, addr)
-		if err != nil {
-			return nil, err
-		}
-		return addrList{addr}, nil
-	}
-	return internetAddrList(afnet, addr, deadline)
-}
-
 func parseNetwork(net string) (afnet string, proto int, err error) {
 	i := last(net, ':')
 	if i < 0 { // no colon

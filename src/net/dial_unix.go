@@ -1,4 +1,4 @@
-// +build linux netbsd openbsd freebsd solaris
+// +build linux netbsd openbsd solaris
 
 package net
 
