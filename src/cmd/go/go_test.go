@@ -2809,6 +2809,11 @@ func TestCgoConsistentResults(t *testing.T) {
 		t.Skip("skipping because Solaris builds are known to be inconsistent; see #13247")
 	}
 
+	if runtime.GOOS == "freebsd" {
+		// See https://golang.org/issue/13247
+		t.Skip("skipping TODO: fix")
+	}
+
 	tg := testgo(t)
 	defer tg.cleanup()
 	tg.parallel()
