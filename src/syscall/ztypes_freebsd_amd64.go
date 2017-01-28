@@ -495,3 +495,37 @@ type Termios struct {
 	Ispeed uint32
 	Ospeed uint32
 }
+
+
+type SCTPSndInfo struct {
+	Sid      uint16
+	Flags    uint16
+	Ppid     uint32
+	Context  uint32
+	Assoc_id uint32
+}
+
+type SCTPInitMsg struct {
+	Num_ostreams   uint16
+	Max_instreams  uint16
+	Max_attempts   uint16
+	Max_init_timeo uint16
+}
+
+type SCTPRcvInfo struct {
+	Sid       uint16
+	Ssn       uint16
+	Flags     uint16
+	Pad_cgo_0 [2]byte
+	Ppid      uint32
+	Tsn       uint32
+	Cumtsn    uint32
+	Context   uint32
+	Assoc_id  uint32
+}
+
+const (
+	SizeofSCTPSndInfo 	   = 0x10
+	SizeofSCTPInitMsg      = 0x8
+	SizeofSCTPRcvInfo      = 0x1c
+)
