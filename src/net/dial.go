@@ -140,6 +140,7 @@ func parseNetwork(ctx context.Context, net string) (afnet string, proto int, err
 		switch net {
 		case "tcp", "tcp4", "tcp6":
 		case "udp", "udp4", "udp6":
+		case "sctp", "sctp4", "sctp6":
 		case "ip", "ip4", "ip6":
 		case "unix", "unixgram", "unixpacket":
 		default:
@@ -551,34 +552,4 @@ func Listen(net, laddr string) (Listener, error) {
 		return nil, err // l is non-nil interface containing nil pointer
 	}
 	return l, nil
-}
-
-func parseNetwork(net string) (afnet string, proto int, err error) {
-	i := last(net, ':')
-	if i < 0 { // no colon
-		switch net {
-		case "tcp", "tcp4", "tcp6":
-		case "udp", "udp4", "udp6":
-		case "sctp", "sctp4", "sctp6":
-		case "ip", "ip4", "ip6":
-		case "unix", "unixgram", "unixpacket":
-		default:
-			return "", 0, UnknownNetworkError(net)
-		}
-		return net, 0, nil
-	}
-	afnet = net[:i]
-	switch afnet {
-	case "ip", "ip4", "ip6":
-		protostr := net[i+1:]
-		proto, i, ok := dtoi(protostr, 0)
-		if !ok || i != len(protostr) {
-			proto, err = lookupProtocol(protostr)
-			if err != nil {
-				return "", 0, err
-			}
-		}
-		return afnet, proto, nil
-	}
-	return "", 0, UnknownNetworkError(net)
 }

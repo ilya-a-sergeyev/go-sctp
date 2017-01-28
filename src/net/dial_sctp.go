@@ -1,8 +1,12 @@
 // +build darwin freebsd
 package net
 
+import (
+	"context"
+)
+
 func ListenPacket(net, laddr string) (PacketConn, error) {
-	addrs, err := resolveAddrList("listen", net, laddr, noDeadline)
+	addrs, err := DefaultResolver.resolveAddrList(context.Background(), "listen", net, laddr, nil)
 	if err != nil {
 		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: nil, Err: err}
 	}

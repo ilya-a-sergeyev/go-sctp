@@ -1,10 +1,10 @@
-// +build darwin
+// +build darwin freebsd
 
 package net
 
 import (
-	"syscall"
 	"os"
+	"syscall"
 )
 
 func (fd *netFD) writeToSCTP(p []byte, sinfo *syscall.SCTPSndInfo, sa syscall.Sockaddr) (length int, err error) {
@@ -12,7 +12,7 @@ func (fd *netFD) writeToSCTP(p []byte, sinfo *syscall.SCTPSndInfo, sa syscall.So
 		return 0, err
 	}
 	defer fd.writeUnlock()
-	if err := fd.pd.PrepareWrite(); err != nil {
+	if err := fd.pd.prepareWrite(); err != nil {
 		return 0, err
 	}
 	for {
@@ -20,7 +20,7 @@ func (fd *netFD) writeToSCTP(p []byte, sinfo *syscall.SCTPSndInfo, sa syscall.So
 		length, err = syscall.SCTPSendMsg(fd.sysfd, p, sinfo, sa, 0)
 
 		if err == syscall.EAGAIN {
-			if err = fd.pd.WaitWrite(); err == nil {
+			if err = fd.pd.waitWrite(); err == nil {
 				continue
 			}
 		}
@@ -38,17 +38,17 @@ func (fd *netFD) ReadFromSCTP(p []byte) (n int, oobn int, flags int, sa syscall.
 		return
 	}
 	defer fd.readUnlock()
-	if err = fd.pd.PrepareRead(); err != nil {
+	if err = fd.pd.prepareRead(); err != nil {
 		return
 	}
 	for {
-//		(n int, oobn int, from Sockaddr, rinfo *SCTPRcvInfo, recvflags int, err error)
+		//		(n int, oobn int, from Sockaddr, rinfo *SCTPRcvInfo, recvflags int, err error)
 		n, oobn, sa, rinfo, flags, err = syscall.SCTPReceiveMessage(fd.sysfd, p, 0)
 
 		if err != nil {
 			n = 0
 			if err == syscall.EAGAIN {
-				if err = fd.pd.WaitRead(); err == nil {
+				if err = fd.pd.waitRead(); err == nil {
 					continue
 				}
 			}
