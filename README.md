@@ -7,10 +7,12 @@ I will try and keep this branch up to date with the master branch of the [offici
 Needless to so say, SCTP in Go is experimental and should be used with caution.  
 
 ## Supported platforms 
-For now this will only work on [FreeBSD](https://www.freebsd.org/) and [macOS/OSX](http://www.apple.com/uk/macos/sierra). 
+For now this will only work on [FreeBSD 11](https://www.freebsd.org/) and [OSX EL Captain](http://www.apple.com/uk/macos/sierra). 
 
 FreeBSD comes with native SCTP support. On Mac OSX follow the instructions in the 
 [official SCTP repository](https://github.com/sctplab/SCTP_NKE_ElCapitan) to install the driver.
+
+MacOS Sierra is not supported yet since there are no SCTP drivers available yet.
 
 Example server:
 
@@ -54,10 +56,15 @@ func main() {
 These commands are based on the instructions [here](https://golang.org/doc/install/source).
 
 	$ git clone https://github.com/cyberroadie/go-sctp
+        $ export GOROOT=/usr/local/go 
 	$ cd go-sctp
-	$ git checkout go-sctp
 	$ cd src
 	$ ./all.bash
+
+To run the go command replace symbolic link /usr/local/bin/go and point it to go-sctp/bin/go:
+
+        $ rm /usr/local/bin/go
+        $ ln -s /pathtorepo/go-sctp/bin/go /usr/local/bin/go
 
 ## Test SCTP in Go
 The [SCTP examples repository](https://github.com/cyberroadie/sctp-examples) contains working examples 
