@@ -12,7 +12,7 @@ For now this will only work on [FreeBSD 11](https://www.freebsd.org/) and [OSX E
 FreeBSD comes with native SCTP support. On Mac OSX follow the instructions in the 
 [official SCTP repository](https://github.com/sctplab/SCTP_NKE_ElCapitan) to install the driver.
 
-MacOS Sierra is not supported yet since there are no SCTP drivers available yet.
+MacOS Sierra is not supported since there are no SCTP drivers available yet.
 
 Example server:
 
