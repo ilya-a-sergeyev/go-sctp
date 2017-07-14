@@ -125,6 +125,7 @@ includes_Linux='
 #include <linux/icmpv6.h>
 #include <net/route.h>
 #include <termios.h>
+#include <linux/sctp.h>
 
 #ifndef MSG_FASTOPEN
 #define MSG_FASTOPEN    0x20000000

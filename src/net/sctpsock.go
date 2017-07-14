@@ -191,8 +191,7 @@ func DialSCTP(ctx context.Context, net string, laddr, raddr *SCTPAddr) (*SCTPCon
 
 func dialSCTP(ctx context.Context, net string, laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	// TODO syscall.SOCK_SEQPACKET can also be syscall.SOCK_STREAM
-	//fd, err := internetSocket(ctx, net, laddr, raddr, syscall.SOCK_SEQPACKET, 0, "dial")
-	fd, err := internetSocket(ctx, net, laddr, raddr, syscall.SOCK_STREAM, 0, "dial")
+	fd, err := internetSocket(ctx, net, laddr, raddr, syscall.SOCK_SEQPACKET, 0, "dial")
 	if err != nil {
 		return nil, &OpError{Op: "dial", Net: net, Source: laddr.opAddr(), Addr: raddr.opAddr(), Err: err}
 	}
